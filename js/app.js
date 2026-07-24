@@ -743,7 +743,10 @@ async function renderDetail(showId) {
 }
 
 export function openShow(showId) {
-  currentShowId = Number(showId);
+  // real shows have numeric ids (dataset gives strings -> Number() to match the numeric key);
+  // TV-Time placeholder shows have string ids like "tvt-show-248580" -> keep them as strings,
+  // else Number() -> NaN -> IDBObjectStore.get(NaN) throws and the detail view is stuck blank.
+  currentShowId = /^\d+$/.test(showId) ? Number(showId) : showId;
   switchView('detail');
 }
 

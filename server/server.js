@@ -284,6 +284,7 @@ const MIME = {
 function serveStatic(req, res, urlPath) {
   let rel;
   try { rel = decodeURIComponent(urlPath); } catch { res.writeHead(400); return res.end('Bad request'); }
+  if (rel.includes('\0')) { res.writeHead(400); return res.end('Bad request'); } // NUL -> fs.readFile throws synchronously (crash)
   if (rel === '/') rel = '/index.html';
   const full = path.normalize(path.join(APP_DIR, rel));
   // relative path must stay inside APP_DIR (no traversal) and outside server/

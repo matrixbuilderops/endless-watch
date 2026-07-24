@@ -46,7 +46,9 @@
       const m = s.match(/(?:^|[^A-Za-z])E(?:pisode)?\s*(\d+)/i);
       if (m) {
         const sm = s.match(/S(?:eason)?\s*(\d+)/i);
-        return { season: sm ? +sm[1] : 1, episode: +m[1] };
+        // no season signal -> null (not 1): let the server match by episode NAME instead of
+        // guessing S1Ex and marking the wrong episode watched.
+        return { season: sm ? +sm[1] : null, episode: +m[1] };
       }
     }
     return { season: null, episode: null };
