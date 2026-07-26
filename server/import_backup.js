@@ -1,9 +1,11 @@
 #!/usr/bin/env node
-// Load a ShowTrack backup JSON straight into a user's server library, so every
-// device syncs it down instead of restoring the (large) file on the phone.
+// Load an Endless Watch backup JSON straight into a user's server library, so
+// every device syncs it down instead of restoring the (large) file on the phone.
 //
 // Usage:
-//   node import_backup.js <username> [path/to/showtrack-backup.json]
+//   node import_backup.js <username> [path/to/backup.json]
+// With no path it looks in ~/tv-time-export-SAFE for endless-watch-backup.json,
+// then showtrack-backup.json (what exports were called before the rename).
 //
 // IMPORTANT: stop the sync server before running this. The server keeps each
 // user's library in memory and rewrites these files on the next change, so an
@@ -17,8 +19,17 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const STORES = ['shows', 'episodes', 'watched', 'movies', 'watchlist', 'lists', 'kv'];
 const KEY_FIELD = { shows: 'id', episodes: 'id', watched: 'epId', movies: 'id', watchlist: 'id', lists: 'id', kv: 'k' };
 
+// Marker written inside every backup file. Kept as the app's original name so
+// backups exported before the rename still load — see js/db.js.
+const BACKUP_MARKER = 'showtrack';
+
 const username = (process.argv[2] || '').trim().toLowerCase();
-const backupPath = process.argv[3] || path.join(process.env.HOME || '', 'tv-time-export-SAFE', 'showtrack-backup.json');
+const defaultDir = path.join(process.env.HOME || '', 'tv-time-export-SAFE');
+const backupPath = process.argv[3] ||
+  [ 'endless-watch-backup.json', 'showtrack-backup.json' ]   // new name first, then the old one
+    .map(f => path.join(defaultDir, f))
+    .find(f => fs.existsSync(f)) ||
+  path.join(defaultDir, 'endless-watch-backup.json');
 
 if (!username) {
   console.error('Usage: node import_backup.js <username> [path/to/backup.json]');
@@ -38,8 +49,8 @@ if (!fs.existsSync(backupPath)) {
 }
 
 const backup = JSON.parse(fs.readFileSync(backupPath, 'utf8'));
-if (backup.app !== 'showtrack') {
-  console.error('That file is not a ShowTrack backup.');
+if (backup.app !== BACKUP_MARKER) {
+  console.error('That file is not an Endless Watch backup.');
   process.exit(1);
 }
 

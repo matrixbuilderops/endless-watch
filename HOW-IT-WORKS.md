@@ -1,6 +1,6 @@
-# How ShowTrack works
+# How Endless Watch works
 
-ShowTrack is a personal TV & movie tracker — a replacement for the shut-down
+Endless Watch is a personal TV & movie tracker — a replacement for the shut-down
 TV Time app. It's four pieces that work together, and the whole thing runs on
 **your** devices. No company hosts your data, and there's no subscription.
 

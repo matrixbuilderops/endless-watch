@@ -1,6 +1,6 @@
-# ShowTrack Sync Server
+# Endless Watch Sync Server
 
-Runs on your desktop and keeps your ShowTrack library identical across every
+Runs on your desktop and keeps your Endless Watch library identical across every
 device you sign in on (phone, desktop, laptop…). It also does the background
 "is this show leaving Netflix?" checks. **Zero dependencies** — just Node.
 
@@ -31,11 +31,11 @@ cd showtrack/server
 node server.js
 ```
 
-You'll see: `ShowTrack sync server on :8570  data=…/data  users=0`
+You'll see: `Endless Watch sync server on :8570  data=…/data  users=0`
 
 That's it — it's running. Leave this terminal open (or set up the service in
 step 5 so it runs on its own). Test it in a browser on the desktop:
-**http://localhost:8570** — you should see the ShowTrack app.
+**http://localhost:8570** — you should see the Endless Watch app.
 
 Config via environment variables (optional):
 - `PORT` — port to listen on (default `8570`)
@@ -79,7 +79,7 @@ Tailscale puts your phone and desktop on a private network with real HTTPS.
    sudo tailscale serve --bg 8570
    ```
    This prints a URL like `https://your-desktop.tailXXXX.ts.net`.
-4. On your phone, open that `https://…ts.net` URL. You get the ShowTrack app,
+4. On your phone, open that `https://…ts.net` URL. You get the Endless Watch app,
    served securely from your own desktop. Add it to your Home Screen.
 5. In the app: **More → Account & sync**. The server field is already filled in
    (it's this same address). Pick a username + password → **Create account**.
@@ -101,11 +101,11 @@ real app. Tailscale is worth the 10 minutes.
 So the server starts on boot and restarts if it crashes:
 
 ```bash
-sudo cp showtrack-sync.service /etc/systemd/system/
+sudo cp endless-watch-sync.service /etc/systemd/system/
 # edit the file first: set User= and the paths to match your setup
 sudo systemctl daemon-reload
-sudo systemctl enable --now showtrack-sync
-systemctl status showtrack-sync        # check it's running
+sudo systemctl enable --now endless-watch-sync
+systemctl status endless-watch-sync        # check it's running
 ```
 
 Also make sure the desktop doesn't sleep (Settings → Power), or background

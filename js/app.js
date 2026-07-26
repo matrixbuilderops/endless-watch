@@ -104,7 +104,7 @@ export function switchView(name) {
   $(`#view-${name}`).classList.add('active');
   document.querySelectorAll('.tab').forEach(t =>
     t.classList.toggle('active', t.dataset.view === name));
-  $('#view-title').textContent = VIEW_TITLES[name] || 'ShowTrack';
+  $('#view-title').textContent = VIEW_TITLES[name] || 'Endless Watch';
   window.scrollTo(0, 0);
   render(name);
 }
@@ -921,7 +921,7 @@ async function downloadBackup() {
   const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `showtrack-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  a.download = `endless-watch-backup-${new Date().toISOString().slice(0, 10)}.json`;
   a.click();
   URL.revokeObjectURL(a.href);
   toast('Backup downloaded');

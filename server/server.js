@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// ShowTrack sync server — zero dependencies (Node built-ins only).
+// The Endless Watch sync server — zero dependencies (Node built-ins only).
 // Holds each user's library and merges changes from every signed-in device
 // (last-writer-wins by record `_t`). Also runs a periodic streaming-availability
 // check so shows leaving a platform can be flagged even when the app is closed.
@@ -445,7 +445,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') return send(res, 204, {});
   const url = req.url.split('?')[0];
   if (req.method === 'GET' && url === '/api/health')
-    return send(res, 200, { ok: true, app: 'showtrack-sync', users: Object.keys(users).length });
+    return send(res, 200, { ok: true, app: 'endless-watch-sync', users: Object.keys(users).length });
   const route = routes[url];
   if (req.method === 'POST' && route) {
     try {
@@ -466,7 +466,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`ShowTrack sync server on ${HOST}:${PORT}  data=${DATA_DIR}  users=${Object.keys(users).length}`);
+  console.log(`The Endless Watch sync server on ${HOST}:${PORT}  data=${DATA_DIR}  users=${Object.keys(users).length}`);
 });
 
 // Store files are written on a short delay (see queueWrite) — make sure a clean

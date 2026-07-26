@@ -46,7 +46,7 @@ class Server:
     """The real sync server, on a throwaway data dir."""
 
     def __init__(self):
-        self.data_dir = tempfile.mkdtemp(prefix="showtrack-e2e-")
+        self.data_dir = tempfile.mkdtemp(prefix="endless-watch-e2e-")
         self.port = free_port()
         self.origin = f"http://127.0.0.1:{self.port}"
         self.proc = None

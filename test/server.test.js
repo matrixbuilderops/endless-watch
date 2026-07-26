@@ -38,7 +38,7 @@ async function post(route, payload) {
 }
 
 before(async () => {
-  dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'showtrack-test-'));
+  dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'endless-watch-test-'));
   proc = spawn(process.execPath, [path.join(__dirname, '..', 'server', 'server.js')], {
     env: { ...process.env, PORT: String(PORT), DATA_DIR: dataDir },
     stdio: 'ignore',

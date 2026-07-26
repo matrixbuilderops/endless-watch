@@ -1,6 +1,6 @@
 {
-  "name": "ShowTrack",
-  "short_name": "ShowTrack",
+  "name": "The Endless Watch",
+  "short_name": "Endless Watch",
   "description": "Track your TV shows — your data, on your device.",
   "start_url": "./",
   "scope": "./",

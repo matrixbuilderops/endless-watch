@@ -43,7 +43,7 @@ const post = async (port, route, payload) => {
 };
 
 test('a push survives an immediate shutdown and a restart', async (t) => {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'showtrack-persist-'));
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'endless-watch-persist-'));
   const portA = 19000 + Math.floor(Math.random() * 500);
   const portB = portA + 1;
   t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
@@ -70,7 +70,7 @@ test('a push survives an immediate shutdown and a restart', async (t) => {
 });
 
 test('a token issued before a restart still works after it', async (t) => {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'showtrack-persist-'));
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'endless-watch-persist-'));
   const portA = 19600 + Math.floor(Math.random() * 300);
   const portB = portA + 1;
   t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));

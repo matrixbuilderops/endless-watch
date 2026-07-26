@@ -1,4 +1,4 @@
-# Setting up ShowTrack
+# Setting up Endless Watch
 
 This walks you through the whole thing: the server on your computer, importing
 your history, your phone, and the browser extension. Do them in order.
@@ -14,16 +14,20 @@ Two separate things travel to the machine you're setting up:
 
 1. **The code** — cloned from the repo in Part 1b below. This is the app, the
    server, and the extension. It contains **none of your data**.
-2. **`showtrack-backup.json`** — the ~27 MB export of your library (1,700+ shows,
-   movies, watchlist, custom lists). This is **not** in the repo; copy it across
+2. **Your library backup** — the ~27 MB JSON export (1,700+ shows, movies,
+   watchlist, custom lists). This is **not** in the repo; copy it across
    separately (USB, a private transfer, etc.). **Your three API keys — TMDB,
-   RapidAPI, and TheTVDB — are baked inside this file.** Loading it (Part 2) both
-   restores your library *and* configures every "where to watch" and movie-search
-   feature. There is no separate key-entry step — you never type an API key
-   anywhere.
+   RapidAPI, and TheTVDB — are baked inside this file**, so treat it as a
+   secret. Loading it (Part 2) both restores your library *and* configures every
+   "where to watch" and movie-search feature. There is no separate key-entry
+   step — you never type an API key anywhere.
 
-If you have the repo but not `showtrack-backup.json`, stop and get that file
-first: without it the app runs but has no library and no working API keys.
+   The app names new exports `endless-watch-backup-YYYY-MM-DD.json`. Files
+   exported before the rename are called `showtrack-backup.json` and still load
+   fine — the marker inside them is unchanged on purpose.
+
+If you have the repo but not that backup file, stop and get it first: without it
+the app runs but has no library and no working API keys.
 
 ## Part 1 — The server (on your computer)
 
@@ -41,7 +45,7 @@ git clone https://github.com/matrixbuilderops/showtrack.git
 cd showtrack/server
 node server.js
 ```
-You'll see `ShowTrack sync server on 127.0.0.1:8570`. Leave it running. Test it:
+You'll see `Endless Watch sync server on 127.0.0.1:8570`. Leave it running. Test it:
 open **http://localhost:8570** in a browser on that computer — you should see the app.
 
 The server listens on **localhost only** by default, so it isn't exposed on cafe
@@ -64,16 +68,23 @@ you that with a private connection that even works away from home.
    sudo tailscale serve --bg 8570
    ```
    It prints a URL like `https://your-computer.tailXXXX.ts.net`. **That URL is
-   your ShowTrack address** — use it everywhere below.
+   your Endless Watch address** — use it everywhere below.
 
 ### 1d. Keep it running (optional but recommended)
 So it starts on boot and restarts if it crashes:
 ```bash
 cd showtrack/server
-sudo cp showtrack-sync.service /etc/systemd/system/
-sudo nano /etc/systemd/system/showtrack-sync.service   # set User= and the paths
+sudo cp endless-watch-sync.service /etc/systemd/system/
+sudo nano /etc/systemd/system/endless-watch-sync.service   # set User= and the paths
 sudo systemctl daemon-reload
-sudo systemctl enable --now showtrack-sync
+sudo systemctl enable --now endless-watch-sync
+```
+Already running the old `showtrack-sync` unit? Retire it first, or you'll have
+two servers fighting over the same data directory:
+```bash
+sudo systemctl disable --now showtrack-sync
+sudo rm /etc/systemd/system/showtrack-sync.service
+sudo systemctl daemon-reload
 ```
 Also make sure the computer doesn't sleep, or background alerts won't run.
 
@@ -100,7 +111,7 @@ syncs everywhere.
 ## Part 3 — Your phone
 
 ### 3a. Install the app
-1. Open your ShowTrack address (the `https://…ts.net` URL) in **Safari** (iPhone)
+1. Open your Endless Watch address (the `https://…ts.net` URL) in **Safari** (iPhone)
    or **Chrome** (Android).
 2. Tap **Share → Add to Home Screen** (iPhone) or **menu → Install app / Add to
    Home screen** (Android).
@@ -129,7 +140,7 @@ On the computer where you watch streaming in a browser:
 1. Open `chrome://extensions` (Chrome/Edge/Brave).
 2. Turn on **Developer mode** (top-right).
 3. Click **Load unpacked** and select the `extension/` folder from the cloned repo.
-4. Click the ShowTrack icon → enter your **server address** and **sign in** with
+4. Click the Endless Watch icon → enter your **server address** and **sign in** with
    your account. Approve the permission prompt.
 
 Now play something on **Netflix, Prime Video, Hulu, Crunchyroll, Paramount+,

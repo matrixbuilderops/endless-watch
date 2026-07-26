@@ -1,4 +1,4 @@
-// ShowTrack scrobbler content script.
+// Endless Watch scrobbler content script.
 //
 // Strategy (most robust first):
 //   1. Media Session API — navigator.mediaSession.metadata is the standard a

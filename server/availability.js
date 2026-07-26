@@ -138,8 +138,8 @@ async function checkUser(u, st, helpers) {
   for (const a of st.alerts) if (!before.has(a.showId + '|' + a.message)) fresh.push(a);
   if (fresh.length && helpers.sendPush && (st.pushSubs || []).length) {
     const payload = JSON.stringify(fresh.length === 1
-      ? { title: 'ShowTrack', body: fresh[0].message, tag: 'showtrack-alert' }
-      : { title: 'ShowTrack', body: `${fresh.length} shows are leaving a platform`, tag: 'showtrack-alert' });
+      ? { title: 'Endless Watch', body: fresh[0].message, tag: 'endless-watch-alert' }
+      : { title: 'Endless Watch', body: `${fresh.length} shows are leaving a platform`, tag: 'endless-watch-alert' });
     const dead = [];
     for (const sub of st.pushSubs) {
       const { status } = await helpers.sendPush(sub, payload);

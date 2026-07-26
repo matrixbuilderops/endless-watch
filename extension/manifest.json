@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "ShowTrack Scrobbler",
+  "name": "Endless Watch Scrobbler",
   "version": "1.1",
-  "description": "Auto-marks the episodes you watch on streaming sites into your ShowTrack app.",
+  "description": "Auto-marks the episodes you watch on streaming sites into your Endless Watch app.",
   "permissions": ["storage", "activeTab"],
   "optional_host_permissions": ["*://*/*"],
   "host_permissions": [
@@ -17,7 +17,7 @@
     "*://*.max.com/*",
     "*://*.peacocktv.com/*"
   ],
-  "action": { "default_popup": "popup.html", "default_title": "ShowTrack" },
+  "action": { "default_popup": "popup.html", "default_title": "Endless Watch" },
   "background": { "service_worker": "background.js" },
   "content_scripts": [
     {

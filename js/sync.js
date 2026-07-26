@@ -1,4 +1,4 @@
-// Sync client. Pushes local changes to the ShowTrack server and pulls remote
+// Sync client. Pushes local changes to the Endless Watch server and pulls remote
 // ones, so every signed-in device converges to the same library.
 // Device-local state (server URL, token, watermarks) lives in localStorage.
 

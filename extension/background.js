@@ -1,5 +1,5 @@
 // Receives scrobble messages from content scripts and forwards them to the
-// ShowTrack server. Debounces duplicates so a re-watched last-few-minutes
+// Endless Watch server. Debounces duplicates so a re-watched last-few-minutes
 // doesn't double-fire.
 
 const recent = new Map(); // key -> timestamp

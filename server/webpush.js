@@ -84,7 +84,7 @@ function vapidHeaders(endpoint, vapid, subject) {
   const aud = new URL(endpoint).origin;
   const header = b64uEnc(JSON.stringify({ typ: 'JWT', alg: 'ES256' }));
   const payload = b64uEnc(JSON.stringify({
-    aud, exp: Math.floor(Date.now() / 1000) + 12 * 3600, sub: subject || 'mailto:showtrack@example.com',
+    aud, exp: Math.floor(Date.now() / 1000) + 12 * 3600, sub: subject || 'mailto:endless-watch@example.com',
   }));
   const signingInput = `${header}.${payload}`;
   const privKey = crypto.createPrivateKey({

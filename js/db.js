@@ -15,7 +15,17 @@
 //   kv        { k, v, _t }
 //   _tombstones { tkey ("store|id"), store, id, _t }
 
+// ---- storage identifiers ----
+// Not the product name. These are the keys this device's data is already filed
+// under: the IndexedDB database, the localStorage namespace, and the marker
+// written into every backup file ever exported. Renaming one makes every device
+// open an empty library and stops existing backups from loading, so changing
+// them is a data migration, not a find-and-replace. They stay 'showtrack' from
+// the app's first name — the rename to The Endless Watch is user-facing only.
 const DB_NAME = 'showtrack';
+const LOCAL_PREFIX = 'showtrack:';
+const BACKUP_MARKER = 'showtrack';
+
 const DB_VERSION = 3;
 
 // key field per synced store, used for tombstones and sync apply
@@ -179,9 +189,9 @@ export const kv = {
 // Device-local sync state (token, server URL, watermarks) lives in
 // localStorage, NOT kv, so it is never itself synced between devices.
 export const local = {
-  get: (k, dflt = null) => { const v = localStorage.getItem('showtrack:' + k); return v === null ? dflt : JSON.parse(v); },
-  set: (k, v) => localStorage.setItem('showtrack:' + k, JSON.stringify(v)),
-  del: (k) => localStorage.removeItem('showtrack:' + k),
+  get: (k, dflt = null) => { const v = localStorage.getItem(LOCAL_PREFIX + k); return v === null ? dflt : JSON.parse(v); },
+  set: (k, v) => localStorage.setItem(LOCAL_PREFIX + k, JSON.stringify(v)),
+  del: (k) => localStorage.removeItem(LOCAL_PREFIX + k),
 };
 
 export function uuid() {
@@ -219,13 +229,13 @@ export async function migrateDirty() {
 // ---- backup / restore ----
 
 export async function exportAll() {
-  const out = { app: 'showtrack', version: DB_VERSION, exportedAt: new Date().toISOString() };
+  const out = { app: BACKUP_MARKER, version: DB_VERSION, exportedAt: new Date().toISOString() };
   for (const s of SYNC_STORES) out[s] = await db.all(s);
   return out;
 }
 
 export async function importAll(data, { merge = false } = {}) {
-  if (!data || data.app !== 'showtrack') throw new Error('Not a ShowTrack backup file');
+  if (!data || data.app !== BACKUP_MARKER) throw new Error('Not an Endless Watch backup file');
   for (const s of SYNC_STORES) {
     if (!Array.isArray(data[s])) continue;
     if (!merge) await db.clear(s);

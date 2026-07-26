@@ -1,6 +1,6 @@
 // App-shell cache: the app works offline; TVmaze data and images load
 // network-first so nothing stale sticks around.
-const CACHE = 'showtrack-v9';
+const CACHE = 'endless-watch-v1';
 const SHELL = [
   './', 'index.html', 'css/style.css',
   'js/app.js', 'js/db.js', 'js/api.js', 'js/html.js', 'js/import.js', 'js/sync.js', 'js/tmdb.js', 'js/push.js',
@@ -40,11 +40,11 @@ self.addEventListener('fetch', (e) => {
 // ---- Web Push: show the notification, and focus the app when tapped ----
 
 self.addEventListener('push', (e) => {
-  let data = { title: 'ShowTrack', body: 'You have a new alert' };
+  let data = { title: 'Endless Watch', body: 'You have a new alert' };
   try { if (e.data) data = e.data.json(); } catch { if (e.data) data.body = e.data.text(); }
-  e.waitUntil(self.registration.showNotification(data.title || 'ShowTrack', {
+  e.waitUntil(self.registration.showNotification(data.title || 'Endless Watch', {
     body: data.body || '',
-    tag: data.tag || 'showtrack',
+    tag: data.tag || 'endless-watch',
     icon: 'icons/icon-192.png',
     badge: 'icons/icon-192.png',
     data: { url: data.url || './' },

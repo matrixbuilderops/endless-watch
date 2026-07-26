@@ -15,7 +15,7 @@ const norm = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 
 function tvmazeGet(path) {
   return new Promise((resolve) => {
-    const req = https.get('https://api.tvmaze.com' + path, { headers: { 'User-Agent': 'ShowTrack-scrobble/1.0' } }, (r) => {
+    const req = https.get('https://api.tvmaze.com' + path, { headers: { 'User-Agent': 'EndlessWatch-scrobble/1.0' } }, (r) => {
       let d = '', over = false;
       r.on('data', c => {
         if (over) return;

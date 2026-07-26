@@ -1,4 +1,4 @@
-# ShowTrack
+# The Endless Watch
 
 A personal TV & movie tracker — a self-hosted replacement for the shut-down
 TV Time app. Your watch history lives on **your** devices (and your own optional

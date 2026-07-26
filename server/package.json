@@ -1,7 +1,7 @@
 {
-  "name": "showtrack-sync-server",
+  "name": "endless-watch-sync-server",
   "version": "1.0.0",
-  "description": "Sync server for the ShowTrack app — accounts, cross-device sync, streaming-availability alerts. Zero dependencies.",
+  "description": "Sync server for the Endless Watch app — accounts, cross-device sync, streaming-availability alerts. Zero dependencies.",
   "private": true,
   "main": "server.js",
   "scripts": {
