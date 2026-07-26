@@ -4,7 +4,9 @@
   "description": "Personal TV & movie tracker — PWA, sync server, and browser scrobbler.",
   "private": true,
   "scripts": {
-    "test": "node --test test/*.test.js test/*.test.mjs"
+    "test": "node --test test/*.test.js test/*.test.mjs",
+    "test:e2e": "python3 test/e2e/test_phone.py",
+    "test:all": "npm test && npm run test:e2e"
   },
   "engines": { "node": ">=18" }
 }

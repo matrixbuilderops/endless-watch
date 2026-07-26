@@ -2,3 +2,5 @@ server/data/
 server/data/**
 *.log
 .DS_Store
+test/e2e/screenshots/
+__pycache__/
