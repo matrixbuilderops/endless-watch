@@ -149,6 +149,6 @@
   }
 
   // expose the pure fns for the offline unit test
-  if (typeof module !== 'undefined') module.exports = { derive, parseSE };
+  if (typeof module !== 'undefined') module.exports = { derive, parseSE, SUFFIX };
   else setInterval(tick, 5000);
 })();

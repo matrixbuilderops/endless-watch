@@ -1,9 +1,9 @@
 // App-shell cache: the app works offline; TVmaze data and images load
 // network-first so nothing stale sticks around.
-const CACHE = 'showtrack-v8';
+const CACHE = 'showtrack-v9';
 const SHELL = [
   './', 'index.html', 'css/style.css',
-  'js/app.js', 'js/db.js', 'js/api.js', 'js/import.js', 'js/sync.js', 'js/tmdb.js', 'js/push.js',
+  'js/app.js', 'js/db.js', 'js/api.js', 'js/html.js', 'js/import.js', 'js/sync.js', 'js/tmdb.js', 'js/push.js',
   'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png',
 ];
 
@@ -21,7 +21,11 @@ self.addEventListener('activate', (e) => {
 
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
-  if (url.origin !== location.origin) return; // API + images: straight to network
+  if (url.origin !== location.origin) return; // TVmaze/TMDB + images: straight to network
+  // The app is normally served from the sync server, so /api/ is same-origin.
+  // Those calls are POSTs — Cache.put() rejects a non-GET request, which threw
+  // on every single sync — and a cached API GET would serve a stale library.
+  if (e.request.method !== 'GET' || url.pathname.startsWith('/api/')) return;
   e.respondWith(
     fetch(e.request)
       .then(res => {

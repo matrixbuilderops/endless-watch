@@ -4,8 +4,12 @@ Auto-marks episodes you watch on streaming sites into your ShowTrack app, and
 tags them with the platform you watched on. It uses the browser's standard Media
 Session API as its backbone (works on most sites) plus tailored detection for
 Netflix, Prime Video, Disney+, and Crunchyroll. Supported sites: **Netflix,
-Prime Video, Hulu, Crunchyroll, Paramount+, Apple TV+, Disney+, Max, Peacock,
-YouTube**.
+Prime Video, Hulu, Crunchyroll, Paramount+, Apple TV+, Disney+, Max, Peacock**.
+
+YouTube is deliberately *not* included. Almost nothing there is a TV episode, so
+it produced junk matches, and it meant the title of every video you finished was
+sent to the server. Add `*://*.youtube.com/*` to `host_permissions` and
+`content_scripts` in `manifest.json` if you want it back.
 
 **It only sees what you watch in this browser on this computer** — phone apps and
 TVs can't be tracked (no service exposes that). Use it on the desktop where you

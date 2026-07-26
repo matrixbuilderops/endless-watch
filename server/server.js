@@ -4,8 +4,8 @@
 // (last-writer-wins by record `_t`). Also runs a periodic streaming-availability
 // check so shows leaving a platform can be flagged even when the app is closed.
 //
-// Run:  node server.js           (defaults to port 8570, ./data)
-// Env:  PORT, DATA_DIR
+// Run:  node server.js           (defaults to 127.0.0.1:8570, ./data)
+// Env:  PORT, HOST, DATA_DIR, ALLOW_ORIGIN, TRUST_PROXY, MAX_USERS
 
 'use strict';
 const http = require('http');
@@ -15,12 +15,24 @@ const fs = require('fs');
 const path = require('path');
 
 const PORT = parseInt(process.env.PORT || '8570', 10);
+// Loopback by default: `tailscale serve` (the documented setup) proxies to
+// localhost, so nothing needs the server on a public interface. Set
+// HOST=0.0.0.0 only if you reach it directly over the LAN.
+const HOST = process.env.HOST || '127.0.0.1';
+// The app and API share an origin in the documented setup, so CORS is not
+// needed. Set ALLOW_ORIGIN to one origin (e.g. https://you.github.io) if you
+// host the PWA elsewhere; it used to send '*', which let any site you happened
+// to visit talk to this server.
+const ALLOW_ORIGIN = process.env.ALLOW_ORIGIN || '';
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const PAGE_LIMIT = 4000;          // records per pull page
 const MAX_BODY = 8 * 1024 * 1024;  // 8 MB per request (client chunks ≤5000 records ≈ 1–2 MB)
 const MAX_USERS = parseInt(process.env.MAX_USERS || '50', 10); // cap accounts (disk-fill DoS)
+const MAX_CACHED_USERS = parseInt(process.env.MAX_CACHED_USERS || '4', 10); // libraries held in RAM
 const AUTH_MAX = 20;              // auth attempts per IP per window (brute-force / signup flood)
 const AUTH_WINDOW_MS = 10 * 60 * 1000;
+const TOKEN_TTL_MS = 180 * 24 * 60 * 60 * 1000; // sessions age out after ~6 months
+const TOMBSTONE_TTL_MS = 365 * 24 * 60 * 60 * 1000; // forget deletions after a year
 const STORES = ['shows', 'episodes', 'watched', 'movies', 'watchlist', 'lists', 'kv'];
 const KEY_FIELD = { shows: 'id', episodes: 'id', watched: 'epId', movies: 'id', watchlist: 'id', lists: 'id', kv: 'k' };
 
@@ -40,6 +52,51 @@ function writeJSON(f, obj) {
   fs.writeFileSync(tmp, JSON.stringify(obj), { mode: 0o600 });
   fs.renameSync(tmp, f);
 }
+
+// ---- coalesced writes for the big per-user store files ----
+// episodes.json alone is tens of MB, and one scrobble touches shows + episodes
+// + watched + meta, so writing each synchronously rewrote ~30 MB and stalled the
+// event loop for every marked episode. Queue the *live object* and serialize it
+// once per flush, so a burst (a chunked upload, a scrobble) collapses into one
+// write per file. users.json / tokens.json stay synchronous via writeJSON —
+// auth state must never lag behind a response.
+const WRITE_DELAY_MS = 400;
+const pendingWrites = new Map(); // file -> () => object
+let writeTimer = null, flushing = null;
+
+function queueWrite(file, getObj) {
+  pendingWrites.set(file, getObj);
+  if (writeTimer) return;
+  writeTimer = setTimeout(() => { writeTimer = null; flushWrites(); }, WRITE_DELAY_MS);
+  writeTimer.unref();
+}
+
+function flushWrites() {
+  if (flushing) return flushing;
+  flushing = (async () => {
+    while (pendingWrites.size) {
+      const batch = [...pendingWrites];
+      pendingWrites.clear();
+      for (const [file, getObj] of batch) {
+        try {
+          const tmp = file + '.tmp';
+          await fs.promises.writeFile(tmp, JSON.stringify(getObj()), { mode: 0o600 });
+          await fs.promises.rename(tmp, file);
+        } catch (e) { console.error('write failed', file, e.message); }
+      }
+    }
+  })().finally(() => { flushing = null; });
+  return flushing;
+}
+
+// Shutdown / pre-eviction: land everything now, synchronously.
+function flushWritesSync() {
+  if (!pendingWrites.size) return;
+  for (const [file, getObj] of pendingWrites) {
+    try { writeJSON(file, getObj()); } catch (e) { console.error('write failed', file, e.message); }
+  }
+  pendingWrites.clear();
+}
 // Null-prototype maps: any client-controlled key (token, username, record id,
 // kv key) can't reach inherited props like "toString"/"constructor", so a
 // bogus token can't impersonate a user and a pushed id of "__proto__" can't
@@ -48,7 +105,17 @@ const nullMap = (src) => Object.assign(Object.create(null), src || {});
 const readMap = (f) => nullMap(readJSON(f, {}));
 
 let users = readMap(usersFile);     // username -> {salt, hash, createdAt}
-let tokens = readMap(tokensFile);   // token -> username
+let tokens = readMap(tokensFile);   // token -> { u: username, at: issuedAt }
+
+// tokens.json used to hold a bare username string per token, and tokens never
+// expired or got pruned. Normalize the old shape so sessions can age out.
+{
+  let migrated = false;
+  for (const t in tokens) {
+    if (typeof tokens[t] === 'string') { tokens[t] = { u: tokens[t], at: Date.now() }; migrated = true; }
+  }
+  if (migrated || pruneTokens()) writeJSON(tokensFile, tokens);
+}
 
 // per-user in-memory state, lazily loaded
 const cache = Object.create(null); // username -> state
@@ -56,9 +123,9 @@ const cache = Object.create(null); // username -> state
 function userDir(u) { return path.join(DATA_DIR, 'u_' + encodeURIComponent(u)); }
 
 function loadUser(u) {
-  if (cache[u]) return cache[u];
+  if (cache[u]) { cache[u].usedAt = Date.now(); return cache[u]; }
   const dir = userDir(u);
-  const state = { records: Object.create(null), tombstones: Object.create(null), seq: 0, alerts: [], lastCheck: {} };
+  const state = { records: Object.create(null), tombstones: Object.create(null), seq: 0, alerts: [], lastCheck: {}, usedAt: Date.now() };
   for (const s of STORES) state.records[s] = readMap(path.join(dir, s + '.json'));
   const meta = readJSON(path.join(dir, 'meta.json'), { seq: 0, tombstones: {}, lastCheck: {} });
   state.seq = meta.seq || 0;
@@ -66,24 +133,47 @@ function loadUser(u) {
   for (const s of STORES) state.tombstones[s] = nullMap(meta.tombstones && meta.tombstones[s]);
   state.alerts = readJSON(path.join(dir, 'alerts.json'), []);
   state.pushSubs = readJSON(path.join(dir, 'push.json'), []);
+  // Forget very old deletions — otherwise meta.json grows forever. A device
+  // that hasn't synced in over a year keeps anything deleted in the meantime.
+  const cutoff = Date.now() - TOMBSTONE_TTL_MS;
+  for (const s of STORES)
+    for (const id in state.tombstones[s])
+      if ((state.tombstones[s][id]._t || 0) < cutoff) delete state.tombstones[s][id];
   cache[u] = state;
+  evictStaleUsers(u);
   return state;
+}
+
+// A loaded library is tens of MB in memory and nothing ever dropped it. Keep the
+// few most recently used and let the rest be re-read on demand.
+function evictStaleUsers(keep) {
+  const keys = Object.keys(cache);
+  if (keys.length <= MAX_CACHED_USERS) return;
+  // a queued write still holds its own state object so it lands correctly, but
+  // re-reading from disk before it does would see stale data — flush first.
+  flushWritesSync();
+  keys.filter(k => k !== keep)
+    .sort((a, b) => cache[a].usedAt - cache[b].usedAt)
+    .slice(0, keys.length - MAX_CACHED_USERS)
+    .forEach(k => delete cache[k]);
 }
 
 function persistPush(u) {
   const dir = userDir(u); fs.mkdirSync(dir, { recursive: true });
-  writeJSON(path.join(dir, 'push.json'), cache[u].pushSubs || []);
+  const st = cache[u];
+  queueWrite(path.join(dir, 'push.json'), () => st.pushSubs || []);
 }
 
 function persistUser(u, changedStores) {
   const dir = userDir(u); fs.mkdirSync(dir, { recursive: true });
   const st = cache[u];
-  for (const s of changedStores || []) writeJSON(path.join(dir, s + '.json'), st.records[s]);
-  writeJSON(path.join(dir, 'meta.json'), { seq: st.seq, tombstones: st.tombstones, lastCheck: st.lastCheck });
+  for (const s of changedStores || []) queueWrite(path.join(dir, s + '.json'), () => st.records[s]);
+  queueWrite(path.join(dir, 'meta.json'), () => ({ seq: st.seq, tombstones: st.tombstones, lastCheck: st.lastCheck }));
 }
 function persistAlerts(u) {
   const dir = userDir(u); fs.mkdirSync(dir, { recursive: true });
-  writeJSON(path.join(dir, 'alerts.json'), cache[u].alerts);
+  const st = cache[u];
+  queueWrite(path.join(dir, 'alerts.json'), () => st.alerts);
 }
 
 // ---------------- auth ----------------
@@ -113,14 +203,34 @@ function login(username, password) {
 }
 function newToken(username) {
   const token = crypto.randomBytes(32).toString('hex');
-  tokens[token] = username; writeJSON(tokensFile, tokens);
+  tokens[token] = { u: username, at: Date.now() };
+  pruneTokens();
+  writeJSON(tokensFile, tokens);
   return token;
+}
+// Drop sessions past the TTL. Returns how many went, so callers can skip the
+// write when nothing changed.
+function pruneTokens() {
+  const cutoff = Date.now() - TOKEN_TTL_MS;
+  let gone = 0;
+  for (const t in tokens) if ((tokens[t].at || 0) < cutoff) { delete tokens[t]; gone++; }
+  return gone;
+}
+function revokeTokens(pred) {
+  let gone = 0;
+  for (const t in tokens) if (pred(t, tokens[t])) { delete tokens[t]; gone++; }
+  if (gone) writeJSON(tokensFile, tokens);
+  return gone;
 }
 function userFor(token) {
   // token must be a string; null-proto `tokens` prevents inherited-key lookups
-  const u = typeof token === 'string' ? tokens[token] : undefined;
-  if (!u) throw err(401, 'Not signed in — sign in again');
-  return u;
+  const e = typeof token === 'string' ? tokens[token] : undefined;
+  if (!e) throw err(401, 'Not signed in — sign in again');
+  if (Date.now() - (e.at || 0) > TOKEN_TTL_MS) {
+    revokeTokens(t => t === token);
+    throw err(401, 'Session expired — sign in again');
+  }
+  return e.u;
 }
 
 // ---------------- sync merge ----------------
@@ -136,7 +246,10 @@ function mergeBatch(u, store, records, deletes) {
     if (id == null) continue;
     const cur = recs[id], tomb = tombs[id];
     const t = r._t || 0;
-    if (cur && (cur._t || 0) > t) continue;         // we have newer
+    // `>=`, not `>`: re-pushing a record we already hold must be a no-op, or it
+    // bumps _seq and every other device pulls a change that isn't one. That
+    // idempotence is what lets the client re-push freely after a pull.
+    if (cur && (cur._t || 0) >= t) continue;        // we have this or newer
     if (tomb && tomb._t > t) continue;              // deleted more recently
     r._seq = ++st.seq;
     recs[id] = r;
@@ -158,24 +271,38 @@ function mergeBatch(u, store, records, deletes) {
   return changed;
 }
 
-// Collect changes with _seq > since across all stores, paginated.
-function pullChanges(u, since) {
-  const st = loadUser(u);
+// Every record and tombstone, ordered by _seq. Building this walks the whole
+// library, and a fresh device pulls ~113k episodes in 4k-record pages — which
+// used to redo the walk and the sort on every one of those ~28 requests.
+// Memoize it against st.seq: any write bumps that, invalidating the list.
+function changeList(st) {
+  if (st._changes && st._changesSeq === st.seq) return st._changes;
   const out = [];
   for (const s of STORES) {
     for (const id in st.records[s]) {
       const r = st.records[s][id];
-      if ((r._seq || 0) > since) out.push({ kind: 'rec', store: s, seq: r._seq, rec: r });
+      out.push({ kind: 'rec', store: s, seq: r._seq || 0, rec: r });
     }
     for (const id in st.tombstones[s]) {
       const tb = st.tombstones[s][id];
       // tb.id preserves the original type (number vs string); fall back for old data
-      if ((tb._seq || 0) > since) out.push({ kind: 'del', store: s, seq: tb._seq, id: tb.id != null ? tb.id : id, _t: tb._t });
+      out.push({ kind: 'del', store: s, seq: tb._seq || 0, id: tb.id != null ? tb.id : id, _t: tb._t });
     }
   }
   out.sort((a, b) => a.seq - b.seq);
-  const page = out.slice(0, PAGE_LIMIT);
-  const more = out.length > PAGE_LIMIT;
+  st._changes = out; st._changesSeq = st.seq;
+  return out;
+}
+
+// Collect changes with _seq > since across all stores, paginated.
+function pullChanges(u, since) {
+  const st = loadUser(u);
+  const all = changeList(st);
+  // sorted by seq, so binary-search the first unseen entry instead of filtering
+  let lo = 0, hi = all.length;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (all[mid].seq > since) hi = mid; else lo = mid + 1; }
+  const page = all.slice(lo, lo + PAGE_LIMIT);
+  const more = all.length > lo + PAGE_LIMIT;
   const records = {}, deletes = [];
   for (const c of page) {
     if (c.kind === 'rec') (records[c.store] = records[c.store] || []).push(c.rec);
@@ -201,12 +328,14 @@ setInterval(() => { const now = Date.now(); for (const [ip, e] of authHits) if (
 
 function send(res, status, obj) {
   const body = JSON.stringify(obj);
-  res.writeHead(status, {
-    'Content-Type': 'application/json',
-    'Access-Control-Allow-Origin': '*',
+  const headers = { 'Content-Type': 'application/json' };
+  if (ALLOW_ORIGIN) Object.assign(headers, {
+    'Access-Control-Allow-Origin': ALLOW_ORIGIN,
     'Access-Control-Allow-Headers': 'Content-Type',
     'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
+    'Vary': 'Origin',
   });
+  res.writeHead(status, headers);
   res.end(body);
 }
 
@@ -238,6 +367,14 @@ const routes = {
     return { ok: true, seq: loadUser(u).seq };
   },
   '/api/pull': (b) => { const u = userFor(b.token); return pullChanges(u, b.since || 0); },
+  // Revoke this device's session, or every session for the account (`all`) —
+  // the only way to cut off a lost or stolen device.
+  '/api/logout': (b) => {
+    const e = typeof b.token === 'string' ? tokens[b.token] : undefined;
+    if (!e) return { ok: true };                    // unknown token: nothing to do
+    const n = b.all ? revokeTokens((t, v) => v.u === e.u) : revokeTokens(t => t === b.token);
+    return { ok: true, revoked: n };
+  },
   '/api/scrobble': async (b) => {
     const u = userFor(b.token);
     const st = loadUser(u);
@@ -276,6 +413,11 @@ const routes = {
 // Static serving of the app itself, so app + API share one origin (no CORS,
 // no mixed-content problem when fronted by HTTPS). App files live one dir up.
 const APP_DIR = path.join(__dirname, '..');
+// APP_DIR is the repo root, so what's web-readable is an allowlist, not a
+// denylist: a denylist served .git/ (whole history), package.json, test/, and
+// would serve node_modules/ the moment anyone ran npm install here.
+const PUBLIC_FILES = new Set(['index.html', 'sw.js', 'manifest.webmanifest']);
+const PUBLIC_DIRS = new Set(['css', 'js', 'icons']);
 const MIME = {
   '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
   '.json': 'application/json', '.webmanifest': 'application/manifest+json',
@@ -287,11 +429,11 @@ function serveStatic(req, res, urlPath) {
   if (rel.includes('\0')) { res.writeHead(400); return res.end('Bad request'); } // NUL -> fs.readFile throws synchronously (crash)
   if (rel === '/') rel = '/index.html';
   const full = path.normalize(path.join(APP_DIR, rel));
-  // relative path must stay inside APP_DIR (no traversal) and outside server/
+  // must stay inside APP_DIR (no traversal) *and* be part of the web app
   const relCheck = path.relative(APP_DIR, full);
   const escapes = relCheck.startsWith('..') || path.isAbsolute(relCheck);
-  const inServerDir = relCheck === 'server' || relCheck.startsWith('server' + path.sep);
-  if (escapes || inServerDir) { res.writeHead(403); return res.end('Forbidden'); }
+  const isPublic = PUBLIC_FILES.has(relCheck) || PUBLIC_DIRS.has(relCheck.split(path.sep)[0]);
+  if (escapes || !isPublic) { res.writeHead(403); return res.end('Forbidden'); }
   fs.readFile(full, (err, buf) => {
     if (err) { res.writeHead(404); return res.end('Not found'); }
     res.writeHead(200, { 'Content-Type': MIME[path.extname(full)] || 'application/octet-stream' });
@@ -323,9 +465,16 @@ const server = http.createServer(async (req, res) => {
   send(res, 404, { error: 'Not found' });
 });
 
-server.listen(PORT, () => {
-  console.log(`ShowTrack sync server on :${PORT}  data=${DATA_DIR}  users=${Object.keys(users).length}`);
+server.listen(PORT, HOST, () => {
+  console.log(`ShowTrack sync server on ${HOST}:${PORT}  data=${DATA_DIR}  users=${Object.keys(users).length}`);
 });
+
+// Store files are written on a short delay (see queueWrite) — make sure a clean
+// shutdown doesn't drop the last few seconds of changes.
+for (const sig of ['SIGINT', 'SIGTERM']) {
+  process.on(sig, () => { flushWritesSync(); process.exit(0); });
+}
+process.on('exit', flushWritesSync);
 
 // ---------------- background availability checks ----------------
 require('./availability.js').schedule({

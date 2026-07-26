@@ -39,7 +39,24 @@ step 5 so it runs on its own). Test it in a browser on the desktop:
 
 Config via environment variables (optional):
 - `PORT` — port to listen on (default `8570`)
+- `HOST` — interface to bind (default `127.0.0.1`, i.e. localhost only; `tailscale
+  serve` proxies locally so it needs no change. Use `0.0.0.0` to reach it by LAN
+  IP, on a trusted network only)
 - `DATA_DIR` — where user data is stored (default `./data`)
+- `ALLOW_ORIGIN` — one origin allowed to call the API cross-origin (default: none;
+  the app is normally served by this server, so same-origin needs no CORS)
+- `TRUST_PROXY` — set to `1` only behind a proxy you control, so `X-Forwarded-For`
+  is used for auth rate limiting
+- `MAX_USERS` — account cap (default `50`)
+- `MAX_CACHED_USERS` — libraries held in memory at once (default `4`)
+
+Only the web app itself is served over HTTP (`index.html`, `js/`, `css/`,
+`icons/`, `sw.js`, the manifest). Everything else in the repo — including `.git/`
+and `server/` — returns 403.
+
+Sessions expire after about six months. `POST /api/logout` revokes the token it
+presents; `{"token": "…", "all": true}` revokes every session on the account,
+which is how you cut off a lost device.
 
 ## 4. Reach it from your phone
 

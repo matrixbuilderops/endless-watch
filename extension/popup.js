@@ -33,6 +33,17 @@ $('signin').addEventListener('click', async () => {
 });
 
 $('signout').addEventListener('click', async () => {
+  // revoke on the server as well — dropping only the local copy left the token
+  // valid forever
+  const { server, token } = await chrome.storage.local.get(['server', 'token']);
+  if (server && token) {
+    try {
+      await fetch(server.replace(/\/$/, '') + '/api/logout', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      });
+    } catch { /* offline: still sign out locally */ }
+  }
   await chrome.storage.local.remove(['token']);
   status('Signed out');
   refresh();

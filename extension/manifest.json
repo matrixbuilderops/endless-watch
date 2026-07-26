@@ -15,8 +15,7 @@
     "*://tv.apple.com/*",
     "*://*.disneyplus.com/*",
     "*://*.max.com/*",
-    "*://*.peacocktv.com/*",
-    "*://*.youtube.com/*"
+    "*://*.peacocktv.com/*"
   ],
   "action": { "default_popup": "popup.html", "default_title": "ShowTrack" },
   "background": { "service_worker": "background.js" },
@@ -32,8 +31,7 @@
         "*://tv.apple.com/*",
         "*://*.disneyplus.com/*",
         "*://*.max.com/*",
-        "*://*.peacocktv.com/*",
-        "*://*.youtube.com/*"
+        "*://*.peacocktv.com/*"
       ],
       "js": ["content.js"],
       "run_at": "document_idle",

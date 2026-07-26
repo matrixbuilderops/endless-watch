@@ -41,8 +41,13 @@ git clone https://github.com/matrixbuilderops/showtrack.git
 cd showtrack/server
 node server.js
 ```
-You'll see `ShowTrack sync server on :8570`. Leave it running. Test it: open
-**http://localhost:8570** in a browser on that computer — you should see the app.
+You'll see `ShowTrack sync server on 127.0.0.1:8570`. Leave it running. Test it:
+open **http://localhost:8570** in a browser on that computer — you should see the app.
+
+The server listens on **localhost only** by default, so it isn't exposed on cafe
+or hotel Wi-Fi. Tailscale (next step) connects to it locally, so the recommended
+setup needs no change. If you'd rather reach it directly by LAN IP, start it with
+`HOST=0.0.0.0 node server.js` — only do that on a network you trust.
 
 ### 1c. Reach it from your phone, securely (Tailscale — recommended)
 Your phone needs HTTPS to install the app and talk to the server. Tailscale gives
@@ -153,8 +158,14 @@ a copy safe. You won't get cross-device sync, auto-tracking, or push notificatio
 ## Troubleshooting
 
 - **Can't reach the server from the phone** — both devices must be signed into the
-  same Tailscale account (or on the same Wi-Fi if using the LAN IP). Confirm the
-  `…ts.net` URL opens the app in the phone browser first.
+  same Tailscale account. Confirm the `…ts.net` URL opens the app in the phone
+  browser first. Reaching it by LAN IP instead needs `HOST=0.0.0.0` (see 1b);
+  hosting the app somewhere other than the server itself (e.g. GitHub Pages) also
+  needs `ALLOW_ORIGIN=https://your-page-host` so the browser permits the calls.
+- **Signed out unexpectedly** — sessions expire after about six months. Sign in
+  again; nothing is lost. If a device is lost or stolen, use **More → Account &
+  sync → Sign out → Sign out everywhere** on a device you still have, which
+  revokes every session on the account, then sign back in.
 - **Extension isn't marking episodes** — make sure it's signed in (click the icon),
   the server is running and reachable, and you actually reached ~92% of the
   episode. Some sites need you to be on the main video page, not a preview.

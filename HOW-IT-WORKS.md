@@ -30,11 +30,15 @@ settings).
 A small zero-dependency Node server you run on your own computer. It holds a copy
 of your library so every device you sign into stays identical.
 
-- **Accounts** — username + password (salted + hashed). Multiple people can each
-  have their own separate library on one server.
+- **Accounts** — username + password (salted + hashed). Sessions expire after
+  about six months and can be revoked (including "sign out everywhere", for a lost
+  phone). Multiple people can each have their own separate library on one server.
 - **Sync** — each record carries a last-modified timestamp; the newest edit wins,
   and deletions propagate. A fresh device pulls your whole library (for a large
-  library, ~150,000 records in about 20 seconds).
+  library, ~150,000 records in about 20 seconds). What a device *uploads* is
+  tracked with a local "changed here, not yet sent" mark rather than by comparing
+  timestamps — comparing them meant a device whose clock ran behind its peers
+  quietly stopped uploading its own edits.
 - It also **serves the app itself**, so the app and your account share one web
   address — which is what makes it work securely over HTTPS.
 

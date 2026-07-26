@@ -1,20 +1,14 @@
-import { db, kv, uuid, exportAll, importAll, local, migrateStamps } from './db.js';
+import { db, kv, uuid, exportAll, importAll, local, migrateStamps, migrateDirty } from './db.js';
 import { tvmaze, normalizeShow, normalizeEpisode, autoPlatform } from './api.js';
 import { tmdb, tmdbImg } from './tmdb.js';
 import { startImportUI } from './import.js';
 import { sync, registerAccount, loginAccount, signOut, syncNow, fetchAlerts, clearAlerts } from './sync.js';
 import { push } from './push.js';
+import { esc, imgCss } from './html.js';
 
 // ---------- tiny helpers ----------
 
 const $ = (sel) => document.querySelector(sel);
-const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c =>
-  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-// Only allow http(s) image URLs, escaped for use inside style="...url('…')".
-const imgCss = (url) => {
-  if (!url || !/^https?:\/\//i.test(url)) return '';
-  return `background-image:url('${url.replace(/[\\'"()\s]/g, encodeURIComponent)}')`;
-};
 
 let toastTimer = null;
 export function toast(msg, ms = 2600) {
@@ -271,9 +265,13 @@ async function renderShows() {
   }
   tiles.sort((a, b) => a.show.name.localeCompare(b.show.name));
 
+  // #shows-empty is for an empty library; a filter that matches nothing needs
+  // its own message, or the grid just renders blank with no explanation
   $('#shows-empty').classList.toggle('hidden', shows.length > 0);
   const shownTiles = tiles.slice(0, showsLimit);
-  $('#shows-grid').innerHTML = shownTiles.map(({ show, p }) => {
+  $('#shows-grid').innerHTML = (shows.length && !tiles.length
+    ? '<p class="muted center" style="grid-column:1/-1;padding:24px">No shows match this filter.</p>'
+    : shownTiles.map(({ show, p }) => {
     const sub = show.archived ? 'Stopped'
       : p.behind > 0 ? `${p.behind} left` : (show.status === 'Ended' ? 'Finished' : 'Up to date');
     return `
@@ -284,7 +282,7 @@ async function renderShows() {
       <div class="t-name">${show.private ? '&#128274; ' : ''}${esc(show.name)}</div>
       <div class="t-sub">${sub} &middot; ${p.pct}%</div>
     </div>`;
-  }).join('')
+  }).join(''))
     + (tiles.length > shownTiles.length
       ? `<button class="big-btn" id="shows-more" style="grid-column:1/-1">Show more (${tiles.length - shownTiles.length} more)</button>` : '');
   const moreTiles = $('#shows-more');
@@ -344,7 +342,8 @@ async function doMovieSearch(q) {
         <div class="sub">${esc((m.overview || '').slice(0, 90))}${m.overview && m.overview.length > 90 ? '…' : ''}</div>
       </div>
       <div class="actions">
-        <button class="follow-btn ${added ? 'following' : ''}" data-add-movie="${m.id}">
+        <button class="follow-btn ${added ? 'following' : ''}" data-add-movie="${m.id}"
+                data-title="${esc(m.title)}" data-poster="${esc(m.poster_path || '')}">
           ${added ? 'Added' : '+ Add'}</button>
       </div>
     </div>`;
@@ -402,7 +401,8 @@ function movieCard(m) {
         <div class="sub">${[year, 'Movie'].filter(Boolean).join(' &middot; ')}</div>
         <div class="sub">${esc((m.overview || '').slice(0, 90))}${m.overview && m.overview.length > 90 ? '…' : ''}</div>
       </div>
-      <div class="actions"><button class="follow-btn" data-add-movie="${m.id}">+ Add</button></div>
+      <div class="actions"><button class="follow-btn" data-add-movie="${m.id}"
+              data-title="${esc(m.title)}" data-poster="${esc(m.poster_path || '')}">+ Add</button></div>
     </div>`;
 }
 
@@ -418,15 +418,14 @@ async function followByName(name, btn) {
 async function addMovieFromTmdb(tmdbId, btn) {
   const existing = (await db.all('movies')).find(m => m.tmdbId === tmdbId);
   if (existing) { toast('Already in your movies'); return; }
-  // pull the search result data we already rendered, plus imdb id
   let imdbId = null;
   try { imdbId = (await tmdb.externalIds(tmdbId)).imdb_id || null; } catch {}
-  const title = btn.closest('.result-card').querySelector('h3').textContent;
-  const posterStyle = btn.closest('.result-card').querySelector('.poster').getAttribute('style') || '';
-  const posterMatch = posterStyle.match(/url\('([^']+)'\)/);
+  // title/poster ride along on the button (see movieCard) — this used to re-read
+  // the rendered <h3> and regex the poster back out of its own style attribute
+  const title = btn.dataset.title || '';
   const movie = {
     id: uuid(), tmdbId, imdbId, title,
-    poster: posterMatch ? decodeURIComponent(posterMatch[1]).replace('/w185', '/w342') : null,
+    poster: btn.dataset.poster ? tmdbImg(btn.dataset.poster, 'w342') : null,
     watchedAt: null, progress: 0, rewatchCount: 0, platform: '', private: false, rating: null, source: 'tmdb',
   };
   await db.put('movies', movie);
@@ -477,6 +476,7 @@ async function setEpProgress(epId, showId, progress) {
   const prev = await db.get('watched', epId);
   if (progress <= 0) { if (prev) await db.del('watched', epId); return; }
   await db.put('watched', {
+    ...prev,                     // keep rewatch dates: db.put replaces the record
     epId, showId,
     watchedAt: new Date().toISOString(),
     progress: Math.min(100, progress),
@@ -660,6 +660,7 @@ async function renderDetail(showId) {
     if (v === null) return;
     show.platform = v;
     await db.put('shows', show);
+    queueSync();
     renderDetail(showId);
   };
   $('#detail-avail').onclick = async () => {
@@ -679,12 +680,14 @@ async function renderDetail(showId) {
   $('#detail-private').onclick = async () => {
     show.private = !show.private;
     await db.put('shows', show);
+    queueSync();
     toast(show.private ? 'Marked private — hidden from lists & stats when private mode is off' : 'No longer private');
     renderDetail(showId);
   };
   $('#detail-archive').onclick = async () => {
     show.archived = !show.archived;
     await db.put('shows', show);
+    queueSync();
     toast(show.archived ? 'Stopped watching' : 'Resumed');
     renderDetail(showId);
   };
@@ -693,6 +696,7 @@ async function renderDetail(showId) {
     await db.delMany('episodes', eps.map(e => e.id));
     await db.delMany('watched', watchedRows.map(w => w.epId));
     await db.del('shows', showId);
+    queueSync();          // otherwise the deletion sits here until the app is backgrounded
     toast('Removed');
     switchView(previousView);
   };
@@ -704,10 +708,14 @@ async function renderDetail(showId) {
       const sn = Number(t.dataset.seasonMark);
       const list = (seasons[sn] || []).filter(e => hasAired(e, now) && wProg(watchedMap.get(e.id)) < 100);
       const ts = new Date().toISOString();
-      await db.putMany('watched', list.map(e => ({
-        epId: e.id, showId, watchedAt: ts, progress: 100,
-        rewatchCount: wRe(watchedMap.get(e.id)), source: 'app',
-      })));
+      await db.putMany('watched', list.map(e => {
+        const prev = watchedMap.get(e.id);
+        return {
+          ...prev,               // keep rewatch dates: putMany replaces the record
+          epId: e.id, showId, watchedAt: ts, progress: 100,
+          rewatchCount: wRe(prev), source: 'app',
+        };
+      }));
       toast(`Season ${sn}: ${list.length} marked watched`);
       queueSync();
       renderDetail(showId);
@@ -868,10 +876,12 @@ async function renderMore() {
     else if (action === 'delete') {
       if (!confirm(`Delete "${m.title}"?`)) return;
       await db.del('movies', m.id);
+      queueSync();
       renderMore();
       return;
     }
     await db.put('movies', m);
+    queueSync();
     renderMore();
   };
 
@@ -1085,6 +1095,7 @@ $('#btn-add-item').addEventListener('click', async () => {
   if (plat) item.platform = plat;
   await db.put('movies', item);
   toast(`Added "${title}"`);
+  queueSync();
   renderMore();
 });
 
@@ -1208,10 +1219,15 @@ $('#btn-login').addEventListener('click', async () => {
   } catch (e) { toast(e.message); }
 });
 $('#btn-sync').addEventListener('click', () => doSyncNow());
-$('#btn-signout').addEventListener('click', () => {
-  if (!confirm('Sign out of this device? Your library stays on this device; it just stops syncing.')) return;
-  signOut(); renderSyncUI(); $('#alerts-panel').classList.add('hidden');
-  toast('Signed out');
+$('#btn-signout').addEventListener('click', async () => {
+  const choice = await sheet('Sign out?', [
+    { label: 'Sign out this device', value: 'one' },
+    { label: 'Sign out everywhere — lost or stolen device', value: 'all', danger: true },
+  ]);
+  if (!choice) return;
+  await signOut({ allDevices: choice === 'all' });
+  renderSyncUI(); $('#alerts-panel').classList.add('hidden');
+  toast(choice === 'all' ? 'Signed out on every device' : 'Signed out');
 });
 $('#set-availmode').addEventListener('change', async (e) => {
   await kv.set('settings:availMode', e.target.value);
@@ -1262,6 +1278,7 @@ document.addEventListener('visibilitychange', () => {
   privateVisible = await kv.get('privateVisible', false);
   refreshPrivateBtn();
   await migrateStamps();
+  await migrateDirty();
   await renderNext();
   // background: refresh stale running shows once per day
   syncStaleShows().then(n => { if (n && currentView === 'next') renderNext(); });

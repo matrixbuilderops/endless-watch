@@ -1,0 +1,10 @@
+{
+  "name": "showtrack",
+  "version": "1.0.0",
+  "description": "Personal TV & movie tracker — PWA, sync server, and browser scrobbler.",
+  "private": true,
+  "scripts": {
+    "test": "node --test test/*.test.js test/*.test.mjs"
+  },
+  "engines": { "node": ">=18" }
+}

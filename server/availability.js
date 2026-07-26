@@ -9,6 +9,7 @@ const https = require('https');
 const INTERVAL_MS = 12 * 60 * 60 * 1000; // every 12h
 const CAP_PER_RUN = 15;                  // shows checked per user per run
 const GAP_MS = 1500;                     // spacing between API calls
+const MAX_RESPONSE = 4 * 1024 * 1024;    // cap on a single API response body
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
@@ -18,9 +19,14 @@ function apiGet(pathAndQuery, key) {
       host: 'streaming-availability.p.rapidapi.com', path: pathAndQuery, method: 'GET',
       headers: { 'x-rapidapi-host': 'streaming-availability.p.rapidapi.com', 'x-rapidapi-key': key },
     }, (res) => {
-      let data = '';
-      res.on('data', c => data += c);
-      res.on('end', () => { try { resolve(JSON.parse(data)); } catch { resolve(null); } });
+      let data = '', over = false;
+      res.on('data', c => {
+        if (over) return;
+        data += c;
+        // don't buffer an unbounded response into memory
+        if (data.length > MAX_RESPONSE) { over = true; req.destroy(); resolve(null); }
+      });
+      res.on('end', () => { if (!over) try { resolve(JSON.parse(data)); } catch { resolve(null); } });
     });
     req.on('error', () => resolve(null));
     req.setTimeout(15000, () => { req.destroy(); resolve(null); });
@@ -67,7 +73,12 @@ async function checkUser(u, st, helpers) {
   const mode = kvGet(st.records, 'settings:availMode', 'app');
   if (!key || (mode !== 'background' && mode !== 'both')) return;
   const owned = (kvGet(st.records, 'settings:myPlatforms', []) || []).map(p => String(p).toLowerCase());
-  const isOwned = (name) => owned.some(p => name.toLowerCase().includes(p) || p.includes(name.toLowerCase()));
+  // guard the name: undefined threw and killed this user's whole run, and ''
+  // made p.includes('') true, marking every service as one you pay for
+  const isOwned = (name) => {
+    const n = String(name || '').toLowerCase();
+    return !!n && owned.some(p => n.includes(p) || p.includes(n));
+  };
 
   const now = Date.now();
   const shows = currentlyWatching(st, now)

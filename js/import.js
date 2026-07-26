@@ -6,6 +6,7 @@
 
 import { db, kv, uuid } from './db.js';
 import { tvmaze, normalizeShow, normalizeEpisode } from './api.js';
+import { esc } from './html.js';
 
 // ---------- minimal ZIP reader (store + deflate via DecompressionStream) ----------
 
@@ -408,9 +409,6 @@ async function importNetflix(rows, report, log, setProgress) {
 
 // ---------- UI ----------
 
-const escI = (s) => String(s ?? '').replace(/[&<>"']/g, c =>
-  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-
 export async function startImportUI(files, container, { onDone, onBack }) {
   container.innerHTML = `<button class="back-btn" id="imp-back">&#8592; Cancel</button>
     <p class="muted">Reading files…</p>`;
@@ -421,7 +419,7 @@ export async function startImportUI(files, container, { onDone, onBack }) {
   catch (err) {
     container.innerHTML = `<button class="back-btn" id="imp-back">&#8592; Back</button>
       <div class="panel"><h2>Could not read file</h2>
-      <p>${escI(err.message)}</p>
+      <p>${esc(err.message)}</p>
       <p class="muted small">Tip: if the ZIP won't open, unzip it on your device and select the .csv files inside instead.</p></div>`;
     container.querySelector('#imp-back').onclick = onBack;
     return;
@@ -437,7 +435,7 @@ export async function startImportUI(files, container, { onDone, onBack }) {
     <div class="panel">
       <h2>Ready to import</h2>
       ${plan.analyzed.map(a => `
-        <div class="simple-row"><span>${escI(a.name.split('/').pop())}</span>
+        <div class="simple-row"><span>${esc(a.name.split('/').pop())}</span>
         <span class="when">${a.rows} rows</span></div>`).join('')}
       <div class="stats-row" style="margin-top:12px">
         <div class="stat"><div class="num">${totalEp.toLocaleString()}</div><div class="lbl">episode records</div></div>
