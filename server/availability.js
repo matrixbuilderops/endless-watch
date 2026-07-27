@@ -90,11 +90,16 @@ async function checkUser(u, st, helpers) {
   const before = new Set(st.alerts.map(a => a.showId + '|' + a.message));
   const fresh = [];
 
+  // apiGet and the pacing gap come through helpers like every other side effect
+  // in this file, so the alert logic can be tested without burning API quota.
+  const fetchShow = helpers.apiGet || apiGet;
+  const gap = helpers.gapMs ?? GAP_MS;
+
   for (const show of shows) {
     let data = null;
-    if (show.imdbId) data = await apiGet(`/shows/${show.imdbId}?country=us`, key);
+    if (show.imdbId) data = await fetchShow(`/shows/${show.imdbId}?country=us`, key);
     st.lastCheck[show.id] = Date.now();
-    if (!data) { await sleep(GAP_MS); continue; }
+    if (!data) { await sleep(gap); continue; }
 
     const opts = (data.streamingOptions && data.streamingOptions.us) || [];
     // drop any stale alerts for this show, then recompute
@@ -112,10 +117,20 @@ async function checkUser(u, st, helpers) {
     }
     // gone from the platform you tagged it with?
     if (show.platform) {
-      const stillThere = opts.some(o => o.service.name.toLowerCase().includes(show.platform.toLowerCase())
-        || show.platform.toLowerCase().includes(o.service.id));
+      // Same guard as isOwned needs, for the same reason: the payload is
+      // third-party, and one entry missing a name used to throw here and abort
+      // this user's whole run. An empty id also had to stop matching, or
+      // platform.includes('') reported every show as still available.
+      const platform = show.platform.toLowerCase();
+      const stillThere = opts.some(o => {
+        const name = String((o.service && o.service.name) || '').toLowerCase();
+        const id = String((o.service && o.service.id) || '').toLowerCase();
+        return (!!name && name.includes(platform)) || (!!id && platform.includes(id));
+      });
       if (!stillThere) {
-        const subs = [...new Set(opts.filter(o => o.type === 'subscription').map(o => o.service.name))];
+        const subs = [...new Set(opts
+          .filter(o => o.type === 'subscription' && o.service && o.service.name)
+          .map(o => o.service.name))];
         // prefer services the user actually pays for
         const yours = subs.filter(isOwned);
         const elsewhere = yours.length ? yours : subs;
@@ -129,7 +144,7 @@ async function checkUser(u, st, helpers) {
         });
       }
     }
-    await sleep(GAP_MS);
+    await sleep(gap);
   }
   helpers.persistUser(u, []);   // save lastCheck (meta)
   helpers.persistAlerts(u);
@@ -155,6 +170,11 @@ async function runAll(helpers) {
     catch (e) { console.error('availability check failed for', u, e.message); }
   }
 }
+
+// currentlyWatching and checkUser are exported for the unit test: they decide
+// what gets an API call and what alert the user is shown.
+exports.currentlyWatching = currentlyWatching;
+exports.checkUser = checkUser;
 
 exports.schedule = (helpers) => {
   // first run shortly after startup, then on the interval

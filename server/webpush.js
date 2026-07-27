@@ -43,6 +43,11 @@ function loadOrCreateVapid(dataDir) {
 const dns = require('dns').promises;
 const net = require('net');
 
+// URL.hostname keeps the brackets on an IPv6 literal ("[::1]"), and net.isIP()
+// says 0 for that — so every IPv6 check below used to be skipped whenever the
+// address came from a URL. Always unwrap before testing.
+const hostOf = (url) => url.hostname.replace(/^\[|\]$/g, '');
+
 function isPrivateIp(ip) {
   if (net.isIPv4(ip)) {
     const p = ip.split('.').map(Number);
@@ -50,12 +55,25 @@ function isPrivateIp(ip) {
       || (p[0] === 169 && p[1] === 254)                 // link-local / metadata
       || (p[0] === 172 && p[1] >= 16 && p[1] <= 31)
       || (p[0] === 192 && p[1] === 168)
-      || (p[0] === 100 && p[1] >= 64 && p[1] <= 127);   // CGNAT / tailnet
+      || (p[0] === 100 && p[1] >= 64 && p[1] <= 127)    // CGNAT / tailnet
+      || p[0] >= 224;                                   // multicast + broadcast
   }
-  const lower = ip.toLowerCase();
-  const m = lower.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-  if (m) return isPrivateIp(m[1]);
-  return lower === '::1' || lower === '::' || lower.startsWith('fe80') || lower.startsWith('fc') || lower.startsWith('fd');
+  const lower = ip.replace(/^\[|\]$/g, '').toLowerCase();
+  // IPv4-mapped, in either spelling: URL normalizes ::ffff:10.0.0.1 to the hex
+  // form ::ffff:a00:1, which the dotted-quad pattern alone never matched.
+  const mapped = lower.match(/^::ffff:(.+)$/);
+  if (mapped) {
+    if (net.isIPv4(mapped[1])) return isPrivateIp(mapped[1]);
+    const parts = mapped[1].split(':');
+    if (parts.length === 2) {
+      const hi = parseInt(parts[0], 16), lo = parseInt(parts[1], 16);
+      if (Number.isFinite(hi) && Number.isFinite(lo))
+        return isPrivateIp([hi >> 8, hi & 255, lo >> 8, lo & 255].join('.'));
+    }
+    return true;                                        // unrecognized mapping: refuse
+  }
+  return lower === '::1' || lower === '::'
+    || lower.startsWith('fe80') || lower.startsWith('fc') || lower.startsWith('fd');
 }
 
 // cheap synchronous check for obviously-bad endpoints (used at subscribe time)
@@ -63,8 +81,9 @@ function endpointLooksSafe(endpoint) {
   if (process.env.ALLOW_INSECURE_PUSH === '1') return true;
   let url; try { url = new URL(endpoint); } catch { return false; }
   if (url.protocol !== 'https:') return false;
-  if (net.isIP(url.hostname) && isPrivateIp(url.hostname)) return false;
-  if (/^(localhost|.*\.local)$/i.test(url.hostname)) return false;
+  const host = hostOf(url);
+  if (net.isIP(host) && isPrivateIp(host)) return false;
+  if (/^(localhost|.*\.local)$/i.test(host)) return false;
   return true;
 }
 
@@ -72,7 +91,14 @@ function endpointLooksSafe(endpoint) {
 async function resolveSafeTarget(url) {
   if (process.env.ALLOW_INSECURE_PUSH === '1') return null; // dial hostname directly (tests)
   if (url.protocol !== 'https:') throw new Error('push endpoint must be https');
-  const addrs = await dns.lookup(url.hostname, { all: true });
+  const host = hostOf(url);
+  // a literal address needs checking, not resolving — dns.lookup('[::1]') just
+  // throws ENOTFOUND, which hid the bracket bug rather than catching it
+  if (net.isIP(host)) {
+    if (isPrivateIp(host)) throw new Error('push endpoint resolves to a private address');
+    return host;
+  }
+  const addrs = await dns.lookup(host, { all: true });
   if (!addrs.length) throw new Error('push endpoint does not resolve');
   for (const a of addrs) if (isPrivateIp(a.address)) throw new Error('push endpoint resolves to a private address');
   return addrs[0].address;
