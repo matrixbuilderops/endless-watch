@@ -205,6 +205,33 @@ function parseNetflixTitle(title) {
 
 const normName = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 
+// A TV Time export logs a rewatch as its own row (`rewatch-episode-…`), so one
+// episode can appear several times. Writing a record per row let putMany
+// overwrite, and every rewatch was silently lost — the same thing that happened
+// to 12 episodes in the original converted library.
+//
+// Rows sharing an exact timestamp are a double-log, not two viewings, so they
+// collapse first; what is left is one watch plus N rewatches.
+export function collapseWatches(showId, hits, keepDates = true) {
+  const byEp = new Map();
+  for (const { epId, when } of hits) {
+    if (!byEp.has(epId)) byEp.set(epId, new Set());
+    byEp.get(epId).add(when);
+  }
+  return [...byEp.entries()].map(([epId, set]) => {
+    const dates = [...set].sort();
+    const rec = {
+      epId, showId, progress: 100,
+      watchedAt: dates[dates.length - 1],     // most recent viewing
+      rewatchCount: dates.length - 1,
+      source: 'tvtime',
+    };
+    // `rewatches` holds the repeat viewings, matching what bumpEpRewatch appends
+    if (keepDates && dates.length > 1) rec.rewatches = dates.slice(1);
+    return rec;
+  });
+}
+
 function num(v) { const n = parseInt(v, 10); return Number.isFinite(n) ? n : null; }
 function isoDate(v) {
   if (!v) return null;
@@ -292,20 +319,23 @@ export async function runImport(plan, log, setProgress) {
       log(`! ${raw.name}: episode fetch failed (${err.message})`);
     }
 
-    const toWatch = [];
+    const hits = [];
     for (const { r, f } of group.epRows) {
       const s = f.season ? num(r[f.season]) : null;
       const n = f.epNumber ? num(r[f.epNumber]) : null;
       const ep = (s != null && n != null) ? epMap.get(`${s}:${n}`) : null;
       if (!ep) { report.epUnmatched++; continue; }
-      toWatch.push({
-        epId: ep.id, showId: raw.id,
-        watchedAt: isoDate(f.watchedAt ? r[f.watchedAt] : null) || new Date().toISOString(),
-        source: 'tvtime',
+      hits.push({
+        epId: ep.id,
+        when: isoDate(f.watchedAt ? r[f.watchedAt] : null) || new Date().toISOString(),
       });
     }
+    const keepDates = await kv.get('settings:recordRewatchDates', true);
+    const toWatch = collapseWatches(raw.id, hits, keepDates);
     if (toWatch.length) await db.putMany('watched', toWatch);
     report.watchedImported += toWatch.length;
+    report.rewatchesImported = (report.rewatchesImported || 0)
+      + toWatch.reduce((n, w) => n + w.rewatchCount, 0);
     report.matchedShows++;
     if (group.followRows.length && !group.epRows.length) report.followsImported++;
     log(`✓ ${raw.name}: ${toWatch.length} episodes marked watched`);

@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert';
 import zlib from 'node:zlib';
 
-import { analyzeFiles } from '../js/import.js';
+import { analyzeFiles, collapseWatches } from '../js/import.js';
 
 // ---------------- a real ZIP, assembled by hand ----------------
 
@@ -314,4 +314,72 @@ test('a full mixed export is separated into the right buckets', async () => {
   assert.strictEqual(out.watchlistMovies.length, 1);
   assert.strictEqual(out.netflix.length, 3);
   assert.strictEqual(out.analyzed.length, 5, 'every file is accounted for in the report');
+});
+
+// ---------------- rewatch collapsing ----------------
+// A TV Time export logs a rewatch as its own row, so one episode arrives several
+// times. Writing one record per row let putMany overwrite and lost every
+// rewatch — which is exactly what happened to 12 episodes in the original
+// converted library.
+
+test('a single viewing is not a rewatch', () => {
+  const [rec] = collapseWatches(82, [{ epId: 1, when: '2021-01-01T00:00:00.000Z' }]);
+  assert.strictEqual(rec.rewatchCount, 0);
+  assert.strictEqual(rec.watchedAt, '2021-01-01T00:00:00.000Z');
+  assert.strictEqual(rec.rewatches, undefined);
+  assert.strictEqual(rec.showId, 82);
+  assert.strictEqual(rec.progress, 100);
+});
+
+test('watching an episode twice becomes one record with a rewatch', () => {
+  const [rec] = collapseWatches(82, [
+    { epId: 1, when: '2019-06-18T10:00:00.000Z' },
+    { epId: 1, when: '2022-03-04T21:00:00.000Z' },
+  ]);
+  assert.strictEqual(rec.rewatchCount, 1);
+  assert.strictEqual(rec.watchedAt, '2022-03-04T21:00:00.000Z', 'watchedAt is the most recent viewing');
+  assert.deepStrictEqual(rec.rewatches, ['2022-03-04T21:00:00.000Z'], 'the repeat viewing is the rewatch');
+});
+
+test('three viewings give a rewatch count of two, in order', () => {
+  const [rec] = collapseWatches(82, [
+    { epId: 1, when: '2022-01-01T00:00:00.000Z' },
+    { epId: 1, when: '2019-01-01T00:00:00.000Z' },
+    { epId: 1, when: '2020-01-01T00:00:00.000Z' },
+  ]);
+  assert.strictEqual(rec.rewatchCount, 2);
+  assert.deepStrictEqual(rec.rewatches, ['2020-01-01T00:00:00.000Z', '2022-01-01T00:00:00.000Z']);
+});
+
+test('rows sharing an exact timestamp are a double-log, not two viewings', () => {
+  const [rec] = collapseWatches(82, [
+    { epId: 1, when: '2019-06-18T10:00:00.000Z' },
+    { epId: 1, when: '2019-06-18T10:00:00.000Z' },
+  ]);
+  assert.strictEqual(rec.rewatchCount, 0, 'the same instant cannot be two viewings');
+  assert.strictEqual(rec.rewatches, undefined);
+});
+
+test('rewatch dates are omitted when the setting is off, but the count survives', () => {
+  const [rec] = collapseWatches(82, [
+    { epId: 1, when: '2019-01-01T00:00:00.000Z' },
+    { epId: 1, when: '2022-01-01T00:00:00.000Z' },
+  ], false);
+  assert.strictEqual(rec.rewatchCount, 1);
+  assert.strictEqual(rec.rewatches, undefined);
+});
+
+test('separate episodes stay separate', () => {
+  const out = collapseWatches(82, [
+    { epId: 1, when: '2021-01-01T00:00:00.000Z' },
+    { epId: 2, when: '2021-01-02T00:00:00.000Z' },
+    { epId: 1, when: '2023-01-01T00:00:00.000Z' },
+  ]);
+  assert.strictEqual(out.length, 2);
+  assert.strictEqual(out.find(r => r.epId === 1).rewatchCount, 1);
+  assert.strictEqual(out.find(r => r.epId === 2).rewatchCount, 0);
+});
+
+test('no rows means no records', () => {
+  assert.deepStrictEqual(collapseWatches(82, []), []);
 });
