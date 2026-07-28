@@ -69,7 +69,9 @@ function currentlyWatching(st, now) {
 }
 
 async function checkUser(u, st, helpers) {
-  const key = kvGet(st.records, 'settings:rapidApiKey', '');
+  // the owner's key from the server vault; the per-user kv copy is the old
+  // pre-vault location and stays as a fallback until it is migrated away
+  const key = helpers.apiKey || kvGet(st.records, 'settings:rapidApiKey', '');
   const mode = kvGet(st.records, 'settings:availMode', 'app');
   if (!key || (mode !== 'background' && mode !== 'both')) return;
   const owned = (kvGet(st.records, 'settings:myPlatforms', []) || []).map(p => String(p).toLowerCase());

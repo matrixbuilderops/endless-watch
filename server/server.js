@@ -31,6 +31,8 @@ const MAX_USERS = parseInt(process.env.MAX_USERS || '50', 10); // cap accounts (
 const MAX_CACHED_USERS = parseInt(process.env.MAX_CACHED_USERS || '4', 10); // libraries held in RAM
 const AUTH_MAX = 20;              // auth attempts per IP per window (brute-force / signup flood)
 const AUTH_WINDOW_MS = 10 * 60 * 1000;
+const CATALOG_MAX = parseInt(process.env.CATALOG_MAX || '60', 10); // catalog lookups per account per window
+const CATALOG_WINDOW_MS = 60 * 1000;
 const TOKEN_TTL_MS = 180 * 24 * 60 * 60 * 1000; // sessions age out after ~6 months
 const TOMBSTONE_TTL_MS = 365 * 24 * 60 * 60 * 1000; // forget deletions after a year
 const STORES = ['shows', 'episodes', 'watched', 'movies', 'watchlist', 'lists', 'kv'];
@@ -42,6 +44,10 @@ fs.mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
 
 const webpush = require('./webpush.js');
 const VAPID = webpush.loadOrCreateVapid(DATA_DIR);
+
+// Owner-held API keys. Clients never see these; they call /api/catalog instead.
+const catalog = require('./catalog.js');
+const KEYS = catalog.loadKeys(DATA_DIR);
 
 const usersFile = path.join(DATA_DIR, 'users.json');
 const tokensFile = path.join(DATA_DIR, 'tokens.json');
@@ -316,15 +322,28 @@ function pullChanges(u, since) {
 
 function err(status, message) { const e = new Error(message); e.status = status; return e; }
 
-// Simple per-IP rate limiter for auth routes (brute-force + signup flooding).
-const authHits = new Map(); // ip -> { count, resetAt }
-function rateLimitAuth(ip) {
+// Fixed-window counters, shared by every limited route. Buckets are separate so
+// a burst of catalog lookups can't lock anyone out of signing in.
+const buckets = new Map(); // bucket -> Map(key -> { count, resetAt })
+function rateLimit(bucket, key, max, windowMs, message) {
+  let b = buckets.get(bucket);
+  if (!b) { b = new Map(); buckets.set(bucket, b); }
   const now = Date.now();
-  let e = authHits.get(ip);
-  if (!e || now > e.resetAt) { e = { count: 0, resetAt: now + AUTH_WINDOW_MS }; authHits.set(ip, e); }
-  if (++e.count > AUTH_MAX) throw err(429, 'Too many attempts — wait a few minutes and try again');
+  let e = b.get(key);
+  if (!e || now > e.resetAt) { e = { count: 0, resetAt: now + windowMs }; b.set(key, e); }
+  if (++e.count > max) throw err(429, message);
 }
-setInterval(() => { const now = Date.now(); for (const [ip, e] of authHits) if (now > e.resetAt) authHits.delete(ip); }, AUTH_WINDOW_MS).unref();
+const rateLimitAuth = (ip) => rateLimit('auth', ip, AUTH_MAX, AUTH_WINDOW_MS,
+  'Too many attempts — wait a few minutes and try again');
+// The catalog spends the owner's API quota, so it is limited per account, not
+// per IP: one person cannot burn the month for everyone else.
+const rateLimitCatalog = (user) => rateLimit('catalog', user, CATALOG_MAX, CATALOG_WINDOW_MS,
+  'Too many lookups — wait a minute and try again');
+
+setInterval(() => {
+  const now = Date.now();
+  for (const b of buckets.values()) for (const [k, e] of b) if (now > e.resetAt) b.delete(k);
+}, AUTH_WINDOW_MS).unref();
 
 function send(res, status, obj) {
   const body = JSON.stringify(obj);
@@ -390,6 +409,17 @@ const routes = {
   '/api/alerts/clear': (b) => {
     const u = userFor(b.token); const st = loadUser(u);
     st.alerts = []; persistAlerts(u); return { ok: true };
+  },
+  // What this server can do for you, so the app knows whether to offer movie
+  // search and "where to watch". Never reveals the keys themselves.
+  '/api/capabilities': (b) => { userFor(b.token); return catalog.capabilities(KEYS); },
+  // Catalog lookups on the owner's keys — an allowlist of named operations, not
+  // a pass-through. See server/catalog.js.
+  '/api/catalog': async (b) => {
+    const u = userFor(b.token);
+    rateLimitCatalog(u);
+    const data = await catalog.run(KEYS, b.op, b.params || {});
+    return { ok: true, data };
   },
   '/api/vapid-public': (b) => { userFor(b.token); return { key: VAPID.publicKey }; },
   '/api/push-subscribe': (b) => {
@@ -465,6 +495,14 @@ const server = http.createServer(async (req, res) => {
   send(res, 404, { error: 'Not found' });
 });
 
+// One-time upgrade: keys used to sync inside each user's kv store. If the vault
+// is empty and a library still carries them, lift them in so nothing has to be
+// re-entered — and so they stop being handed back down to every device.
+{
+  const from = catalog.adoptKeysFromLibrary(DATA_DIR, KEYS, Object.keys(users), loadUser);
+  if (from) console.log(`Adopted API keys from "${from}" into ${path.join(DATA_DIR, 'keys.json')} (0600)`);
+}
+
 server.listen(PORT, HOST, () => {
   console.log(`The Endless Watch sync server on ${HOST}:${PORT}  data=${DATA_DIR}  users=${Object.keys(users).length}`);
 });
@@ -481,4 +519,5 @@ require('./availability.js').schedule({
   loadUser, persistAlerts, persistUser, persistPush,
   listUsers: () => Object.keys(users),
   sendPush: (sub, payload) => webpush.sendNotification(sub, payload, VAPID),
+  apiKey: KEYS.rapidapi,   // the owner's key, not one synced up from a device
 });
