@@ -41,8 +41,8 @@ Check with `node --version`. If you don't have it:
 
 ### 1b. Get the code and start it
 ```bash
-git clone https://github.com/matrixbuilderops/showtrack.git
-cd showtrack/server
+git clone https://github.com/matrixbuilderops/endless-watch.git
+cd endless-watch/server
 node server.js
 ```
 You'll see `Endless Watch sync server on 127.0.0.1:8570`. Leave it running. Test it:
@@ -73,7 +73,7 @@ you that with a private connection that even works away from home.
 ### 1d. Keep it running (optional but recommended)
 So it starts on boot and restarts if it crashes:
 ```bash
-cd showtrack/server
+cd endless-watch/server
 sudo cp endless-watch-sync.service /etc/systemd/system/
 sudo nano /etc/systemd/system/endless-watch-sync.service   # set User= and the paths
 sudo systemctl daemon-reload
@@ -97,7 +97,7 @@ You have your converted library in `showtrack-backup.json`. Two ways in:
 **Option A — server-side import (best for a big library).** Stop the server, run
 the import, start it again:
 ```bash
-# from showtrack/server, with the server stopped:
+# from endless-watch/server, with the server stopped:
 node import_backup.js <your-username> /path/to/showtrack-backup.json
 ```
 (Create `<your-username>` first in Part 3, step 3b, then come back and run this.)
@@ -156,7 +156,7 @@ open the app and it's there after the next sync.
 ## Shortcut: just the phone, no server
 
 Don't want a server? The app works standalone:
-1. Open **https://matrixbuilderops.github.io/showtrack/** on your phone.
+1. Open **https://matrixbuilderops.github.io/endless-watch/** on your phone.
 2. Add it to your home screen.
 3. More → **Restore from backup** (or Import TV Time) to load your library.
 

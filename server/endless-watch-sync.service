@@ -6,12 +6,12 @@ After=network.target
 Type=simple
 # EDIT these two lines to match your machine:
 User=YOUR_USERNAME
-WorkingDirectory=/home/YOUR_USERNAME/showtrack/server
+WorkingDirectory=/home/YOUR_USERNAME/endless-watch/server
 ExecStart=/usr/bin/node server.js
 Restart=on-failure
 RestartSec=5
 # optional: change where data is stored
-# Environment=DATA_DIR=/home/YOUR_USERNAME/showtrack-data
+# Environment=DATA_DIR=/home/YOUR_USERNAME/endless-watch-data
 # Environment=PORT=8570
 
 [Install]

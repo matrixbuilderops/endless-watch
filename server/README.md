@@ -21,8 +21,8 @@ user's data is separate, so you can add family members later.
 Clone the app repo (the server lives in the `server/` folder):
 
 ```bash
-git clone https://github.com/matrixbuilderops/showtrack.git
-cd showtrack/server
+git clone https://github.com/matrixbuilderops/endless-watch.git
+cd endless-watch/server
 ```
 
 ## 3. Run it

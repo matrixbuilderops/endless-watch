@@ -19,7 +19,7 @@ Time or Netflix history.
 
 ## Try it without setting anything up
 
-Open **https://matrixbuilderops.github.io/showtrack/** on your phone and add it to
+Open **https://matrixbuilderops.github.io/endless-watch/** on your phone and add it to
 your home screen. It works standalone (single device); the sync server unlocks
 cross-device sync, auto-tracking, and notifications. See SETUP.md.
 
