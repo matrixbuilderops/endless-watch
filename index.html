@@ -158,6 +158,93 @@
     <p class="muted small center">The Endless Watch &mdash; your shows, on your device.<br>Episode data by <a href="https://www.tvmaze.com" target="_blank" rel="noopener">TVmaze</a>.</p>
   </section>
 
+  <!-- SOCIAL -->
+  <section id="view-social" class="view">
+
+    <!-- sign-out state -->
+    <div id="social-signedout" class="hidden">
+      <div class="panel">
+        <h2>&#127760; Endless Watch Community</h2>
+        <p class="muted small" style="margin-bottom:14px">Connect to the community — discuss shows, follow friends, join groups. Your private watch library never leaves your device.</p>
+        <label class="set-label">Social server
+          <input id="soc-server" type="url" autocomplete="off" inputmode="url" placeholder="https://social.example.com"></label>
+        <label class="set-label">Username
+          <input id="soc-user" type="text" autocomplete="username" placeholder="pick a username"></label>
+        <label class="set-label">Password
+          <input id="soc-pass" type="password" autocomplete="current-password" placeholder="password (6+ chars)"></label>
+        <button id="btn-soc-register" class="big-btn accent">Create account</button>
+        <button id="btn-soc-login" class="big-btn">Sign in</button>
+      </div>
+    </div>
+
+    <!-- signed-in state -->
+    <div id="social-signedin" class="hidden">
+
+      <!-- sub-tab nav -->
+      <div class="seg-row" id="social-tabs">
+        <button class="seg active" data-socialtab="feed">Feed</button>
+        <button class="seg" data-socialtab="groups">Groups</button>
+        <button class="seg" data-socialtab="tickets">Support</button>
+        <button class="seg" data-socialtab="profile">Profile</button>
+      </div>
+
+      <!-- FEED -->
+      <div id="soc-tab-feed">
+        <div id="soc-feed-list" class="soc-feed"></div>
+        <div id="soc-feed-empty" class="empty hidden">
+          <p class="empty-icon">&#128241;</p>
+          <p>Nothing in your feed yet.</p>
+          <p class="muted">Follow some users from their profile to see their activity here.</p>
+        </div>
+      </div>
+
+      <!-- GROUPS -->
+      <div id="soc-tab-groups" class="hidden">
+        <button id="btn-soc-new-group" class="big-btn accent" style="margin-bottom:14px">&#65291; Propose a new group</button>
+        <div id="soc-groups-list"></div>
+      </div>
+
+      <!-- GROUP THREAD (overlay within social) -->
+      <div id="soc-tab-thread" class="hidden">
+        <button id="btn-soc-thread-back" class="back-btn">&#8592; Back</button>
+        <h2 id="soc-thread-title" style="margin-bottom:12px"></h2>
+        <div id="soc-thread-list" class="soc-thread"></div>
+        <div class="soc-compose">
+          <textarea id="soc-thread-input" placeholder="Write a reply…" rows="3"></textarea>
+          <button id="btn-soc-thread-send" class="big-btn accent">Post</button>
+        </div>
+      </div>
+
+      <!-- SUPPORT TICKETS -->
+      <div id="soc-tab-tickets" class="hidden">
+        <button id="btn-soc-new-ticket" class="big-btn accent" style="margin-bottom:14px">&#128139; Open a support ticket</button>
+        <div id="soc-tickets-list"></div>
+      </div>
+
+      <!-- PROFILE -->
+      <div id="soc-tab-profile" class="hidden">
+        <div class="panel">
+          <h2 id="soc-profile-name" style="margin-bottom:6px"></h2>
+          <p id="soc-profile-bio" class="muted small" style="margin-bottom:14px"></p>
+          <label class="set-label">Bio
+            <input id="soc-edit-bio" type="text" placeholder="Tell the community about yourself" maxlength="300"></label>
+          <label class="set-label">Your personal server URL (optional — lets others link to your library)
+            <input id="soc-edit-serverurl" type="url" placeholder="https://your-desktop:8570"></label>
+          <button id="btn-soc-save-profile" class="big-btn accent">Save profile</button>
+          <button id="btn-soc-signout" class="big-btn" style="margin-top:4px">Sign out of community</button>
+        </div>
+        <div id="soc-admin-panel" class="hidden">
+          <div class="panel">
+            <h2>&#128737; Admin panel</h2>
+            <button id="btn-soc-pending-groups" class="big-btn">&#9203; Review pending groups</button>
+            <button id="btn-soc-modlog" class="big-btn">&#128203; Mod log</button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
   <!-- SHOW DETAIL (overlay) -->
   <section id="view-detail" class="view detail-view">
     <div id="detail-content"></div>
@@ -175,6 +262,7 @@
   <button class="tab" data-view="upcoming"><span class="tab-ico">&#128197;</span>Soon</button>
   <button class="tab" data-view="shows"><span class="tab-ico">&#128250;</span>Shows</button>
   <button class="tab" data-view="search"><span class="tab-ico">&#128269;</span>Search</button>
+  <button class="tab" data-view="social"><span class="tab-ico">&#127760;</span>Social</button>
   <button class="tab" data-view="more"><span class="tab-ico">&#8943;</span>More</button>
 </nav>
 

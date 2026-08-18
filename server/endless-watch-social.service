@@ -1,0 +1,23 @@
+[Unit]
+Description=Endless Watch social server
+After=network.target
+
+[Service]
+Type=simple
+# EDIT these two lines to match your machine:
+User=YOUR_USERNAME
+WorkingDirectory=/home/YOUR_USERNAME/endless-watch/server
+ExecStart=/usr/bin/node social.js
+Restart=on-failure
+RestartSec=5
+# The social server listens on all interfaces so Tailscale Funnel can reach it.
+# Keep it behind Tailscale Funnel — do NOT expose it directly to the internet.
+Environment=SOCIAL_HOST=0.0.0.0
+Environment=SOCIAL_PORT=8571
+# Optional: set where social data is stored (default: ./social-data next to social.js)
+# Environment=SOCIAL_DATA_DIR=/home/YOUR_USERNAME/endless-watch-social-data
+# Optional: allow cross-origin requests from your personal server
+# Environment=SOCIAL_ALLOW_ORIGIN=https://YOUR_TAILSCALE_HOSTNAME:8570
+
+[Install]
+WantedBy=multi-user.target

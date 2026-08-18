@@ -5,6 +5,7 @@ import { startImportUI } from './import.js';
 import { sync, registerAccount, loginAccount, signOut, syncNow, fetchAlerts, clearAlerts } from './sync.js';
 import { push } from './push.js';
 import { esc, imgCss } from './html.js';
+import { social } from './social.js';
 
 // ---------- tiny helpers ----------
 
@@ -83,7 +84,7 @@ async function pickPlatform(current, suggestion) {
 
 const VIEW_TITLES = {
   next: 'Watch Next', upcoming: 'Upcoming', shows: 'My Shows',
-  search: 'Search', more: 'More', detail: 'Show', import: 'Import TV Time',
+  search: 'Search', social: 'Community', more: 'More', detail: 'Show', import: 'Import TV Time',
 };
 let currentView = 'next';
 let previousView = 'next';
@@ -114,6 +115,7 @@ function render(name) {
   if (name === 'next') renderNext();
   else if (name === 'upcoming') renderUpcoming();
   else if (name === 'shows') renderShows();
+  else if (name === 'social') renderSocial();
   else if (name === 'more') renderMore();
   else if (name === 'detail') renderDetail(currentShowId);
   else if (name === 'search') doSearch($('#search-input').value);
@@ -1397,6 +1399,341 @@ $('#file-tvtime').addEventListener('change', async (e) => {
   e.target.value = '';
 });
 
+// ================================================================
+// SOCIAL
+// ================================================================
+
+// Which sub-tab is active inside the social view.
+let socialTab = 'feed';
+// For the group thread overlay: which group is open.
+let socialThreadCtx = null;  // { type, refId, name }
+
+function renderSocial() {
+  if (social.configured()) {
+    $('#social-signedout').classList.add('hidden');
+    $('#social-signedin').classList.remove('hidden');
+    // show admin panel only for the admin user
+    $('#soc-admin-panel').classList.toggle('hidden', social.username() !== 'alexander-sorrell-it');
+    // restore profile fields
+    $('#soc-profile-name').textContent = '@' + social.username();
+    showSocialTab(socialTab);
+  } else {
+    $('#social-signedout').classList.remove('hidden');
+    $('#social-signedin').classList.add('hidden');
+    // pre-fill server if already set
+    const srv = social.server();
+    if (srv) $('#soc-server').value = srv;
+  }
+}
+
+function showSocialTab(name) {
+  socialTab = name;
+  document.querySelectorAll('#social-tabs .seg').forEach(b =>
+    b.classList.toggle('active', b.dataset.socialtab === name));
+  const tabs = ['feed', 'groups', 'tickets', 'profile', 'thread'];
+  tabs.forEach(t => $(`#soc-tab-${t}`).classList.toggle('hidden', t !== name));
+  if (name === 'feed')    loadSocialFeed();
+  if (name === 'groups')  loadSocialGroups();
+  if (name === 'tickets') loadSocialTickets();
+  if (name === 'profile') loadSocialProfile();
+}
+
+function fmtRelTime(iso) {
+  if (!iso) return '';
+  const diff = Date.now() - new Date(iso).getTime();
+  if (diff < 60000)  return 'just now';
+  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+  return `${Math.floor(diff / 86400000)}d ago`;
+}
+
+// ---- feed ----
+
+async function loadSocialFeed() {
+  const list = $('#soc-feed-list');
+  const empty = $('#soc-feed-empty');
+  list.innerHTML = '<p class="muted small" style="padding:12px 0">Loading…</p>';
+  empty.classList.add('hidden');
+  try {
+    const { events } = await social.getFeed();
+    if (!events.length) {
+      list.innerHTML = '';
+      empty.classList.remove('hidden');
+      return;
+    }
+    list.innerHTML = events.map(e => {
+      const icon = {
+        finished_episode: '✅', finished_season: '🏆',
+        finished_show: '🎉', started_show: '▶️',
+      }[e.type] || '📺';
+      const sub = e.season ? ` S${String(e.season).padStart(2,'0')}` +
+        (e.episode ? `E${String(e.episode).padStart(2,'0')}` : '') : '';
+      return `<div class="soc-event">
+        <span class="soc-event-icon">${icon}</span>
+        <div class="soc-event-body">
+          <span class="soc-event-who">${esc(e.userId)}</span>
+          <span class="soc-event-show">${esc(e.showName)}${sub ? `<span class="muted"> ${sub}</span>` : ''}</span>
+        </div>
+        <span class="soc-event-when muted small">${fmtRelTime(e.createdAt)}</span>
+      </div>`;
+    }).join('');
+  } catch (er) {
+    list.innerHTML = `<p class="muted small" style="padding:12px 0">Could not load feed: ${esc(er.message)}</p>`;
+  }
+}
+
+// ---- groups ----
+
+async function loadSocialGroups() {
+  const el = $('#soc-groups-list');
+  el.innerHTML = '<p class="muted small" style="padding:12px 0">Loading…</p>';
+  try {
+    const { groups } = await social.listGroups('approved');
+    if (!groups.length) {
+      el.innerHTML = '<p class="muted small" style="padding:12px 0">No groups yet. Be the first to propose one!</p>';
+      return;
+    }
+    el.innerHTML = groups.map(g => `
+      <div class="panel soc-group-card" data-gid="${esc(g.id)}">
+        <div class="soc-group-name">${esc(g.name)}</div>
+        <div class="muted small soc-group-desc">${esc(g.description)}</div>
+        <button class="big-btn" style="margin-top:10px;margin-bottom:0" data-open-group="${esc(g.id)}" data-group-name="${esc(g.name)}">Open discussion ›</button>
+      </div>`).join('');
+    el.querySelectorAll('[data-open-group]').forEach(btn => {
+      btn.addEventListener('click', () => openGroupThread(btn.dataset.openGroup, btn.dataset.groupName));
+    });
+  } catch (er) {
+    el.innerHTML = `<p class="muted small" style="padding:12px 0">Could not load groups: ${esc(er.message)}</p>`;
+  }
+}
+
+function openGroupThread(groupId, groupName) {
+  socialThreadCtx = { type: 'group', refId: groupId, name: groupName };
+  $('#soc-thread-title').textContent = groupName;
+  $('#soc-thread-input').value = '';
+  showSocialTab('thread');
+  loadThread();
+}
+
+async function loadThread() {
+  const el = $('#soc-thread-list');
+  if (!socialThreadCtx) return;
+  el.innerHTML = '<p class="muted small" style="padding:12px 0">Loading…</p>';
+  try {
+    const { posts } = await social.getThread(socialThreadCtx);
+    if (!posts.length) {
+      el.innerHTML = '<p class="muted small" style="padding:12px 0">No posts yet — be the first to say something!</p>';
+      return;
+    }
+    el.innerHTML = posts.map(p => `
+      <div class="soc-post" data-pid="${esc(p.id)}">
+        <div class="soc-post-header">
+          <span class="soc-post-author">${esc(p.authorId)}</span>
+          <span class="muted small">${fmtRelTime(p.createdAt)}</span>
+          ${p.authorId === social.username() ? `<button class="soc-del-btn muted" data-del="${esc(p.id)}" title="Delete post">✕</button>` : ''}
+        </div>
+        <div class="soc-post-body">${esc(p.body)}</div>
+      </div>`).join('');
+    el.querySelectorAll('[data-del]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        try {
+          await social.removePost({ postId: btn.dataset.del, ...socialThreadCtx });
+          loadThread();
+        } catch (er) { toast(er.message); }
+      });
+    });
+  } catch (er) {
+    el.innerHTML = `<p class="muted small" style="padding:12px 0">Could not load thread: ${esc(er.message)}</p>`;
+  }
+}
+
+// ---- tickets ----
+
+async function loadSocialTickets() {
+  const el = $('#soc-tickets-list');
+  el.innerHTML = '<p class="muted small" style="padding:12px 0">Loading…</p>';
+  try {
+    const { tickets } = await social.listTickets();
+    if (!tickets.length) {
+      el.innerHTML = '<p class="muted small" style="padding:12px 0">No tickets yet.</p>';
+      return;
+    }
+    el.innerHTML = tickets.map(t => {
+      const statusColor = { open: 'var(--accent)', in_progress: 'var(--good)', escalated: 'var(--danger)', resolved: 'var(--muted)' }[t.status] || 'var(--muted)';
+      return `<div class="panel" style="margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <span class="soc-ticket-subj">${esc(t.subject)}</span>
+          <span class="muted small" style="color:${statusColor}">${t.status}</span>
+        </div>
+        <p class="muted small">${t.messages.length} message${t.messages.length !== 1 ? 's' : ''} · last reply ${fmtRelTime(t.lastReplyAt)}</p>
+        ${t.status !== 'resolved' ? `
+          <button class="big-btn" style="margin-top:10px;margin-bottom:4px" data-ticket-open="${esc(t.id)}">Reply / view ›</button>
+          ${t.status !== 'escalated' ? `<button class="big-btn" style="margin-bottom:0" data-ticket-escalate="${esc(t.id)}">&#9650; Escalate to admin</button>` : ''}
+        ` : '<p class="muted small" style="margin-top:6px">Resolved</p>'}
+      </div>`;
+    }).join('');
+    el.querySelectorAll('[data-ticket-open]').forEach(btn => {
+      btn.addEventListener('click', () => openTicketReply(btn.dataset.ticketOpen, tickets));
+    });
+    el.querySelectorAll('[data-ticket-escalate]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        try { await social.escalateTicket(btn.dataset.ticketEscalate); toast('Escalated to admin'); loadSocialTickets(); }
+        catch (er) { toast(er.message); }
+      });
+    });
+  } catch (er) {
+    el.innerHTML = `<p class="muted small" style="padding:12px 0">Could not load tickets: ${esc(er.message)}</p>`;
+  }
+}
+
+async function openTicketReply(ticketId, tickets) {
+  const t = tickets.find(x => x.id === ticketId);
+  if (!t) return;
+  const history = t.messages.map(m =>
+    `**${m.authorId}** (${fmtRelTime(m.createdAt)}): ${m.body}`).join('\n\n');
+  const reply = prompt(`Conversation:\n\n${history}\n\n--- Your reply:`);
+  if (!reply || !reply.trim()) return;
+  try {
+    await social.replyTicket({ ticketId, body: reply.trim() });
+    toast('Reply sent');
+    loadSocialTickets();
+  } catch (er) { toast(er.message); }
+}
+
+// ---- profile ----
+
+async function loadSocialProfile() {
+  try {
+    const { profile } = await social.getProfile(social.username());
+    $('#soc-profile-bio').textContent = profile.bio || 'No bio yet.';
+    $('#soc-edit-bio').value = profile.bio || '';
+    $('#soc-edit-serverurl').value = profile.serverUrl || '';
+  } catch { /* ignore — user may be newly registered */ }
+}
+
+// ---- social event handlers ----
+
+$('#btn-soc-register').addEventListener('click', async () => {
+  const server = $('#soc-server').value.trim();
+  const u = $('#soc-user').value.trim();
+  const p = $('#soc-pass').value;
+  if (!server || !u || !p) { toast('Fill in server, username, and password'); return; }
+  try {
+    await social.register(server, u, p);
+    toast('Account created — welcome!');
+    renderSocial();
+  } catch (e) { toast(e.message); }
+});
+
+$('#btn-soc-login').addEventListener('click', async () => {
+  const server = $('#soc-server').value.trim();
+  const u = $('#soc-user').value.trim();
+  const p = $('#soc-pass').value;
+  if (!server || !u || !p) { toast('Fill in server, username, and password'); return; }
+  try {
+    await social.login(server, u, p);
+    toast('Signed in — welcome back!');
+    renderSocial();
+  } catch (e) { toast(e.message); }
+});
+
+$('#btn-soc-signout').addEventListener('click', async () => {
+  const ok = await sheet('Sign out of community?', [{ label: 'Sign out', value: true, danger: true }]);
+  if (!ok) return;
+  await social.logout();
+  toast('Signed out of community');
+  renderSocial();
+});
+
+$('#btn-soc-save-profile').addEventListener('click', async () => {
+  try {
+    await social.updateProfile({
+      bio: $('#soc-edit-bio').value,
+      serverUrl: $('#soc-edit-serverurl').value,
+    });
+    $('#soc-profile-bio').textContent = $('#soc-edit-bio').value || 'No bio yet.';
+    toast('Profile saved');
+  } catch (e) { toast(e.message); }
+});
+
+$('#social-tabs').addEventListener('click', e => {
+  const b = e.target.closest('[data-socialtab]');
+  if (b) showSocialTab(b.dataset.socialtab);
+});
+
+$('#btn-soc-thread-back').addEventListener('click', () => showSocialTab('groups'));
+
+$('#btn-soc-thread-send').addEventListener('click', async () => {
+  const body = $('#soc-thread-input').value.trim();
+  if (!body) return;
+  try {
+    await social.postToThread({ ...socialThreadCtx, body });
+    $('#soc-thread-input').value = '';
+    loadThread();
+  } catch (e) { toast(e.message); }
+});
+
+$('#btn-soc-new-group').addEventListener('click', async () => {
+  const name = prompt('Group name (2–80 chars):');
+  if (!name || !name.trim()) return;
+  const description = prompt('Description (10–500 chars):');
+  if (!description || !description.trim()) return;
+  const rules = prompt('Rules (optional):') || '';
+  try {
+    await social.createGroup({ name: name.trim(), description: description.trim(), rules: rules.trim() });
+    toast('Group submitted — waiting for admin approval');
+    loadSocialGroups();
+  } catch (e) { toast(e.message); }
+});
+
+$('#btn-soc-new-ticket').addEventListener('click', async () => {
+  const subject = prompt('Subject (3–120 chars):');
+  if (!subject || !subject.trim()) return;
+  const body = prompt('Describe the issue:');
+  if (!body || !body.trim()) return;
+  try {
+    await social.openTicket({ subject: subject.trim(), body: body.trim() });
+    toast('Support ticket opened');
+    loadSocialTickets();
+  } catch (e) { toast(e.message); }
+});
+
+// ---- admin panel handlers ----
+
+$('#btn-soc-pending-groups').addEventListener('click', async () => {
+  try {
+    const { groups } = await social.listGroups('pending');
+    if (!groups.length) { toast('No pending groups'); return; }
+    for (const g of groups) {
+      const choice = await sheet(`"${g.name}" by ${g.createdBy}`, [
+        { label: '✅ Approve', value: 'approve' },
+        { label: '❌ Reject', value: 'reject', danger: true },
+        { label: 'Skip', value: 'skip' },
+      ]);
+      if (choice === 'approve') {
+        await social.approveGroup(g.id);
+        toast(`"${g.name}" approved`);
+      } else if (choice === 'reject') {
+        const reason = prompt('Reason for rejection (optional):') || '';
+        await social.rejectGroup(g.id, reason);
+        toast(`"${g.name}" rejected`);
+      }
+    }
+  } catch (e) { toast(e.message); }
+});
+
+$('#btn-soc-modlog').addEventListener('click', async () => {
+  try {
+    const { entries } = await social.modLog();
+    if (!entries.length) { toast('Mod log is empty'); return; }
+    // Show last 10 in an alert
+    const lines = entries.slice(-10).map(e =>
+      `${e.action} | ${e.modId} → ${e.targetId}${e.groupId ? ` (group ${e.groupId})` : ''}\n${e.reason || ''}`
+    ).join('\n\n');
+    alert(`Last ${Math.min(10, entries.length)} mod log entries:\n\n${lines}`);
+  } catch (e) { toast(e.message); }
+});
+
 // ---------- boot ----------
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
@@ -1411,6 +1748,7 @@ document.addEventListener('visibilitychange', () => {
   refreshPrivateBtn();
   await migrateStamps();
   await migrateDirty();
+  await social.init();  // load social session (token + server) from kv
   await renderNext();
   // background: refresh stale running shows once per day
   syncStaleShows().then(n => { if (n && currentView === 'next') renderNext(); });

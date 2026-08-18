@@ -153,6 +153,78 @@ open the app and it's there after the next sync.
 
 ---
 
+## Part 5 — The social server (community features)
+
+The social server runs alongside your personal sync server on the same Dell desktop.
+It handles community discussions, groups, activity feeds, and support tickets.
+**Your personal watch library never touches this server — it's strictly social data.**
+
+Connecting to social is fully opt-in. Users who don't want it use the app exactly as before.
+
+### 5a. Start the social server
+
+```bash
+cd endless-watch/server
+node social.js
+```
+
+You should see: `Endless Watch social server on 127.0.0.1:8571`
+
+### 5b. Expose it publicly via Tailscale Funnel
+
+The social server needs to be reachable by other people on the internet (unlike the
+personal sync server which stays private to your Tailscale devices).
+
+```bash
+# Expose port 8571 to the public internet via Tailscale Funnel
+sudo tailscale funnel 8571
+```
+
+This gives it a public URL like `https://your-computer.tailXXXX.ts.net:8571`.
+That URL is what other users type in the app as their **Social server** address.
+
+> **Note:** Port 8570 (your personal sync server) stays private — accessed only via
+> `tailscale serve` from your own devices. Port 8571 (social) is the only public one.
+
+### 5c. Keep it running (optional but recommended)
+
+```bash
+cd endless-watch/server
+sudo cp endless-watch-social.service /etc/systemd/system/
+sudo nano /etc/systemd/system/endless-watch-social.service   # set User= and paths
+sudo systemctl daemon-reload
+sudo systemctl enable --now endless-watch-social
+```
+
+### 5d. Connect from the app
+
+1. Open the app → tap **Social** tab.
+2. Enter the social server URL (the `https://…:8571` URL from 5b).
+3. Pick a username and password → **Create account**.
+
+Your personal account (from More → Account & sync) and your social account are
+completely separate — different servers, different credentials.
+
+### 5e. Social server: admin account
+
+The admin username is `alexander-sorrell-it` — register this account first to claim
+it. The admin can:
+- Approve or reject group proposals (Social → Profile → Admin panel → Review pending groups)
+- View the mod log
+- Ban users
+
+All groups are **public** — there are no private groups by design.
+
+### 5f. Test the server is running
+
+```bash
+curl https://your-computer.tailXXXX.ts.net:8571/social/health
+# Should return: {"ok":true,"app":"endless-watch-social",...}
+```
+
+---
+
+
 ## Shortcut: just the phone, no server
 
 Don't want a server? The app works standalone:

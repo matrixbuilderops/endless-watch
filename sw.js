@@ -1,9 +1,9 @@
 // App-shell cache: the app works offline; TVmaze data and images load
 // network-first so nothing stale sticks around.
-const CACHE = 'endless-watch-v1';
+const CACHE = 'endless-watch-v2';
 const SHELL = [
   './', 'index.html', 'css/style.css',
-  'js/app.js', 'js/db.js', 'js/api.js', 'js/html.js', 'js/import.js', 'js/rewatch.js', 'js/sync.js', 'js/tmdb.js', 'js/push.js',
+  'js/app.js', 'js/db.js', 'js/api.js', 'js/html.js', 'js/import.js', 'js/rewatch.js', 'js/sync.js', 'js/tmdb.js', 'js/push.js', 'js/social.js',
   'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png',
 ];
 
