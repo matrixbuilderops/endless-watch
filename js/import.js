@@ -4,9 +4,13 @@
 // heuristically and everything unrecognized ends up in a downloadable report
 // instead of being silently dropped.
 
-import { db, kv, uuid } from './db.js';
-import { tvmaze, normalizeShow, normalizeEpisode } from './api.js';
+// Aliased so runImport can take the browser's stores and the TVmaze client as
+// arguments and default to these. It is the only way to exercise the import
+// without IndexedDB and the network — see test/runimport.test.mjs.
+import { db as appDb, kv as appKv, uuid } from './db.js';
+import { tvmaze as appTvmaze, normalizeShow, normalizeEpisode } from './api.js';
 import { esc } from './html.js';
+import { collapseWatches } from './rewatch.js';
 
 // ---------- minimal ZIP reader (store + deflate via DecompressionStream) ----------
 
@@ -205,33 +209,6 @@ function parseNetflixTitle(title) {
 
 const normName = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 
-// A TV Time export logs a rewatch as its own row (`rewatch-episode-…`), so one
-// episode can appear several times. Writing a record per row let putMany
-// overwrite, and every rewatch was silently lost — the same thing that happened
-// to 12 episodes in the original converted library.
-//
-// Rows sharing an exact timestamp are a double-log, not two viewings, so they
-// collapse first; what is left is one watch plus N rewatches.
-export function collapseWatches(showId, hits, keepDates = true) {
-  const byEp = new Map();
-  for (const { epId, when } of hits) {
-    if (!byEp.has(epId)) byEp.set(epId, new Set());
-    byEp.get(epId).add(when);
-  }
-  return [...byEp.entries()].map(([epId, set]) => {
-    const dates = [...set].sort();
-    const rec = {
-      epId, showId, progress: 100,
-      watchedAt: dates[dates.length - 1],     // most recent viewing
-      rewatchCount: dates.length - 1,
-      source: 'tvtime',
-    };
-    // `rewatches` holds the repeat viewings, matching what bumpEpRewatch appends
-    if (keepDates && dates.length > 1) rec.rewatches = dates.slice(1);
-    return rec;
-  });
-}
-
 function num(v) { const n = parseInt(v, 10); return Number.isFinite(n) ? n : null; }
 function isoDate(v) {
   if (!v) return null;
@@ -239,9 +216,34 @@ function isoDate(v) {
   return isNaN(d) ? null : d.toISOString();
 }
 
-export async function runImport(plan, log, setProgress) {
+// Match a show's episode rows to TVmaze episodes by season+number, then collapse
+// repeat viewings into one record each. A TV Time export logs a rewatch as its
+// own row (`rewatch-episode-…`), so one episode can arrive several times; this
+// used to push a record per row and let putMany overwrite, which silently
+// dropped every rewatch in an imported library.
+//
+// Split out of runImport because runImport itself needs a browser (IndexedDB and
+// the TVmaze fetch), and this is the part that was actually wrong.
+export function buildWatchRecords(showId, epRows, epMap, keepDates = true) {
+  const hits = [];
+  let unmatched = 0;
+  for (const { r, f } of epRows) {
+    const s = f.season ? num(r[f.season]) : null;
+    const n = f.epNumber ? num(r[f.epNumber]) : null;
+    const ep = (s != null && n != null) ? epMap.get(`${s}:${n}`) : null;
+    if (!ep) { unmatched++; continue; }
+    hits.push({
+      epId: ep.id,
+      when: isoDate(f.watchedAt ? r[f.watchedAt] : null) || new Date().toISOString(),
+    });
+  }
+  return { records: collapseWatches(showId, hits, keepDates), unmatched };
+}
+
+export async function runImport(plan, log, setProgress, io = {}) {
+  const { db = appDb, kv = appKv, tvmaze = appTvmaze } = io;
   const { episodes, movies, follows, watchlistMovies = [] } = plan;
-  const report = { matchedShows: 0, unmatchedShows: [], watchedImported: 0, epUnmatched: 0, moviesImported: 0, followsImported: 0 };
+  const report = { matchedShows: 0, unmatchedShows: [], showsDeferred: [], showsNameMatched: [], watchedImported: 0, epUnmatched: 0, moviesImported: 0, followsImported: 0 };
 
   // -- group episode + follow rows by show key (tvdb id, else name) --
   const byShow = new Map();
@@ -279,11 +281,17 @@ export async function runImport(plan, log, setProgress) {
     const label = sample.f.title ? sample.r[sample.f.title] : k;
 
     let raw = null;
+    // A tvdb id identifies one show; a name search returns a ranked list and we
+    // take the top of it. Those are different levels of certainty and the record
+    // used to look identical either way, so a show matched to the wrong series
+    // was indistinguishable from one matched exactly.
+    let namedFrom = null;
     try {
       if (k.startsWith('tvdb:')) raw = await tvmaze.byTvdb(k.slice(5));
       if (!raw && label) {
         const res = await tvmaze.search(label);
         raw = res.length ? res[0].show : null;
+        if (raw) namedFrom = res.length;
       }
     } catch (err) {
       log(`! ${label || k}: lookup failed (${err.message}) — will retry on next run`);
@@ -308,6 +316,7 @@ export async function runImport(plan, log, setProgress) {
 
     // episode list from TVmaze, matched by season+number
     let epMap = new Map();
+    let epFetchFailed = false;
     try {
       const eps = await tvmaze.episodes(raw.id);
       const norm = eps.map(e => normalizeEpisode(e, raw.id));
@@ -316,27 +325,31 @@ export async function runImport(plan, log, setProgress) {
       await db.put('shows', show);
       for (const e of norm) epMap.set(`${e.season}:${e.number}`, e);
     } catch (err) {
+      epFetchFailed = true;
       log(`! ${raw.name}: episode fetch failed (${err.message})`);
     }
 
-    const hits = [];
-    for (const { r, f } of group.epRows) {
-      const s = f.season ? num(r[f.season]) : null;
-      const n = f.epNumber ? num(r[f.epNumber]) : null;
-      const ep = (s != null && n != null) ? epMap.get(`${s}:${n}`) : null;
-      if (!ep) { report.epUnmatched++; continue; }
-      hits.push({
-        epId: ep.id,
-        when: isoDate(f.watchedAt ? r[f.watchedAt] : null) || new Date().toISOString(),
-      });
+    // An empty epMap matches nothing, so every watch row for this show would be
+    // filed as "unmatched" while the show still counted as imported and logged a
+    // tick — a total loss reported as a success. Defer it instead, and leave it
+    // out of `done` so a re-run retries it, the same as a failed lookup above.
+    if (epFetchFailed && group.epRows.length) {
+      report.showsDeferred.push(`${raw.name} (${group.epRows.length})`);
+      log(`! ${raw.name}: ${group.epRows.length} watch row(s) not imported — will retry on next run`);
+      continue;
     }
+
     const keepDates = await kv.get('settings:recordRewatchDates', true);
-    const toWatch = collapseWatches(raw.id, hits, keepDates);
+    const { records: toWatch, unmatched } = buildWatchRecords(raw.id, group.epRows, epMap, keepDates);
+    report.epUnmatched += unmatched;
     if (toWatch.length) await db.putMany('watched', toWatch);
     report.watchedImported += toWatch.length;
     report.rewatchesImported = (report.rewatchesImported || 0)
       + toWatch.reduce((n, w) => n + w.rewatchCount, 0);
     report.matchedShows++;
+    if (namedFrom !== null) {
+      report.showsNameMatched.push(`"${label}" → ${raw.name}${namedFrom > 1 ? ` (${namedFrom} candidates)` : ''}`);
+    }
     if (group.followRows.length && !group.epRows.length) report.followsImported++;
     log(`✓ ${raw.name}: ${toWatch.length} episodes marked watched`);
     done.add(k); await kv.set('import:doneKeys', [...done]);
@@ -374,7 +387,7 @@ export async function runImport(plan, log, setProgress) {
   report.watchlistImported = wlRows.length;
 
   // -- Netflix viewing history --
-  if (plan.netflix && plan.netflix.length) await importNetflix(plan.netflix, report, log, setProgress);
+  if (plan.netflix && plan.netflix.length) await importNetflix(plan.netflix, report, log, setProgress, io);
 
   await kv.set('import:lastReport', { ...report, at: new Date().toISOString() });
   return report;
@@ -382,8 +395,10 @@ export async function runImport(plan, log, setProgress) {
 
 // Best-effort: match Netflix rows (episode has a NAME but no number) to TVmaze
 // episodes by name, and tag everything watched as Netflix.
-async function importNetflix(rows, report, log, setProgress) {
+async function importNetflix(rows, report, log, setProgress, io = {}) {
+  const { db = appDb, tvmaze = appTvmaze } = io;
   report.netflixEpisodes = 0; report.netflixMovies = 0; report.netflixUnmatched = 0;
+  report.netflixDeferred = [];
   const bySeries = new Map();
   const movies = [];
   for (const r of rows) {
@@ -396,7 +411,15 @@ async function importNetflix(rows, report, log, setProgress) {
   for (const [series, eps] of bySeries) {
     setProgress(++i / (bySeries.size + 1));
     let raw;
-    try { const res = await tvmaze.search(series); raw = res.length ? res[0].show : null; } catch { raw = null; }
+    // A lookup that failed is not the same fact as a series TVmaze does not
+    // have, and reporting both as "no match" made a network blip look like a
+    // permanent absence while the episodes were dropped either way.
+    try { const res = await tvmaze.search(series); raw = res.length ? res[0].show : null; }
+    catch (err) {
+      report.netflixDeferred.push(`${series} (${eps.length})`);
+      log(`! ${series}: lookup failed (${err.message}) — re-run to import`);
+      continue;
+    }
     if (!raw) { report.netflixUnmatched += eps.length; log(`? no match: ${series}`); continue; }
 
     let show = await db.get('shows', raw.id);
@@ -407,18 +430,27 @@ async function importNetflix(rows, report, log, setProgress) {
 
     let tvEps;
     try { tvEps = (await tvmaze.episodes(raw.id)).map(e => normalizeEpisode(e, raw.id)); }
-    catch { report.netflixUnmatched += eps.length; continue; }
+    catch (err) {
+      report.netflixDeferred.push(`${series} (${eps.length})`);
+      log(`! ${raw.name}: episode fetch failed (${err.message}) — re-run to import`);
+      continue;
+    }
     await db.putMany('episodes', tvEps);
     const byName = new Map(tvEps.map(e => [normName(e.name) + '|' + e.season, e]));
     const byNameAny = new Map(tvEps.map(e => [normName(e.name), e]));
 
-    const toWatch = [];
+    // Collect hits then collapse rewatches the same way the TV Time importer does,
+    // so watching the same episode on Netflix twice produces rewatchCount:1 instead
+    // of the second row silently overwriting the first with no rewatch record.
+    const hits = [];
     for (const r of eps) {
       const key = normName(r.epName);
       const ep = (r.seasonNum != null && byName.get(key + '|' + r.seasonNum)) || byNameAny.get(key);
       if (!ep) { report.netflixUnmatched++; continue; }
-      toWatch.push({ epId: ep.id, showId: raw.id, watchedAt: isoDate(r.date) || new Date().toISOString(), progress: 100, source: 'netflix' });
+      hits.push({ epId: ep.id, when: isoDate(r.date) || new Date().toISOString() });
     }
+    const keepDates = await (io.kv || appKv).get('settings:recordRewatchDates', true);
+    const toWatch = collapseWatches(raw.id, hits, keepDates).map(w => ({ ...w, source: 'netflix' }));
     if (toWatch.length) await db.putMany('watched', toWatch);
     report.netflixEpisodes += toWatch.length;
     log(`✓ ${raw.name}: ${toWatch.length}/${eps.length} episodes (Netflix)`);
@@ -506,11 +538,17 @@ export async function startImportUI(files, container, { onDone, onBack }) {
 
     try {
       const report = await runImport(plan, log, setProgress);
-      await kv.del('import:doneKeys'); // finished cleanly — clear checkpoint
+      await appKv.del('import:doneKeys'); // finished cleanly — clear checkpoint
       log('');
       log(`Done! ${report.matchedShows} shows, ${report.watchedImported.toLocaleString()} watched episodes, ${report.moviesImported} movies.`);
       if (report.unmatchedShows.length)
         log(`Shows with no TVmaze match (${report.unmatchedShows.length}): ${report.unmatchedShows.join(', ')}`);
+      if (report.showsNameMatched.length)
+        log(`Matched by name, not by id — worth a look (${report.showsNameMatched.length}): ${report.showsNameMatched.join('; ')}`);
+      if (report.netflixDeferred && report.netflixDeferred.length)
+        log(`Netflix series deferred, re-run to import (${report.netflixDeferred.length}): ${report.netflixDeferred.join(', ')}`);
+      if (report.showsDeferred.length)
+        log(`Deferred — episode list unavailable, re-run to import (${report.showsDeferred.length}): ${report.showsDeferred.join(', ')}`);
       if (report.epUnmatched)
         log(`${report.epUnmatched} episode records could not be matched to an episode.`);
       goBtn.textContent = 'Import finished — view library';

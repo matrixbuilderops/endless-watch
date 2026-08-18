@@ -74,6 +74,7 @@ async function checkUser(u, st, helpers) {
   const key = helpers.apiKey || kvGet(st.records, 'settings:rapidApiKey', '');
   const mode = kvGet(st.records, 'settings:availMode', 'app');
   if (!key || (mode !== 'background' && mode !== 'both')) return;
+  const country = (kvGet(st.records, 'settings:country', 'us') || 'us').toLowerCase().slice(0, 2);
   const owned = (kvGet(st.records, 'settings:myPlatforms', []) || []).map(p => String(p).toLowerCase());
   // guard the name: undefined threw and killed this user's whole run, and ''
   // made p.includes('') true, marking every service as one you pay for
@@ -99,11 +100,12 @@ async function checkUser(u, st, helpers) {
 
   for (const show of shows) {
     let data = null;
-    if (show.imdbId) data = await fetchShow(`/shows/${show.imdbId}?country=us`, key);
+    if (show.imdbId) data = await fetchShow(`/shows/${show.imdbId}?country=${country}`, key);
     st.lastCheck[show.id] = Date.now();
     if (!data) { await sleep(gap); continue; }
 
-    const opts = (data.streamingOptions && data.streamingOptions.us) || [];
+    const opts = (data.streamingOptions && data.streamingOptions[country])
+      || (data.streamingOptions && data.streamingOptions.us) || [];
     // drop any stale alerts for this show, then recompute
     st.alerts = st.alerts.filter(a => a.showId !== show.id);
 

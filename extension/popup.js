@@ -2,11 +2,14 @@ const $ = (id) => document.getElementById(id);
 const status = (m, ok = true) => { $('status').textContent = m; $('status').style.color = ok ? '#3ddc84' : '#ff5d5d'; };
 
 async function refresh() {
-  const { server, username, token } = await chrome.storage.local.get(['server', 'username', 'token']);
+  const { server, username, token, threshold } = await chrome.storage.local.get(['server', 'username', 'token', 'threshold']);
   const signedIn = !!token;
   $('signedout').classList.toggle('hidden', signedIn);
   $('signedin').classList.toggle('hidden', !signedIn);
-  if (signedIn) $('who').textContent = `Signed in as ${username} · ${server}`;
+  if (signedIn) {
+    $('who').textContent = `Signed in as ${username} · ${server}`;
+    $('threshold').value = threshold != null ? threshold : 90;
+  }
 }
 
 $('signin').addEventListener('click', async () => {
@@ -30,6 +33,12 @@ $('signin').addEventListener('click', async () => {
     status('Signed in!');
     refresh();
   } catch (e) { status('Could not reach server', false); }
+});
+
+$('threshold').addEventListener('change', async () => {
+  const v = Math.max(50, Math.min(99, parseInt($('threshold').value, 10) || 90));
+  $('threshold').value = v;
+  await chrome.storage.local.set({ threshold: v });
 });
 
 $('signout').addEventListener('click', async () => {

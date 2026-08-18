@@ -128,11 +128,14 @@
         <input id="set-rapid" type="password" autocomplete="off" placeholder="not set"></label>
       <label class="set-label">TheTVDB API key
         <input id="set-tvdb" type="password" autocomplete="off" placeholder="not set"></label>
+      <label class="set-label">Your country <span class="muted small">(2-letter code, e.g. us, gb, au — for "where to watch")</span>
+        <input id="set-country" type="text" autocomplete="off" placeholder="us" maxlength="2" style="width:60px;text-transform:uppercase"></label>
       <button id="btn-save-settings" class="big-btn">Save settings</button>
     </div>
     <div class="panel">
       <h2>Stats</h2>
       <div id="stats" class="stats-row"></div>
+      <div id="stats-chart" class="stats-chart"></div>
     </div>
     <div class="panel">
       <h2>Left to watch, per platform</h2>

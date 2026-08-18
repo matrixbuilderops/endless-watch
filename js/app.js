@@ -93,6 +93,7 @@ let platformFilter = '';
 let privateVisible = false;
 let nextLimit = 60;
 let showsLimit = 120;
+let nextSort = 'activity'; // 'activity' | 'new'
 const isHidden = (x) => x.private && !privateVisible;
 
 export function switchView(name) {
@@ -163,22 +164,47 @@ function showProgress(show, epsByShow, watchedMap, now = Date.now()) {
 
 async function renderNext() {
   const { shows, epsByShow, watchedMap, lastActivity } = await libraryState();
+  const weekAgo = Date.now() - 7 * 86400000;
+  const now = Date.now();
   const items = [];
   for (const show of shows) {
     if (show.archived || isHidden(show)) continue;
     const p = showProgress(show, epsByShow, watchedMap);
-    if (p.nextEp) items.push({ show, ...p, activity: lastActivity[show.id] || 0 });
+    if (!p.nextEp) continue;
+    // flag shows that aired something new in the last 7 days
+    const eps = epsByShow[show.id] || [];
+    const hasNew = eps.some(e => {
+      const t = e.airstamp ? new Date(e.airstamp).getTime() : (e.airdate ? new Date(e.airdate + 'T23:59:59').getTime() : 0);
+      return t > weekAgo && t <= now;
+    });
+    items.push({ show, ...p, activity: lastActivity[show.id] || 0, hasNew });
   }
-  items.sort((a, b) => b.activity - a.activity ||
-    (b.nextEp.airstamp || '').localeCompare(a.nextEp.airstamp || ''));
+
+  if (nextSort === 'new') {
+    // new-this-week shows float to top sorted by most-recent air date, then rest by activity
+    items.sort((a, b) => {
+      if (a.hasNew !== b.hasNew) return a.hasNew ? -1 : 1;
+      if (a.hasNew && b.hasNew) return (b.nextEp.airstamp || '').localeCompare(a.nextEp.airstamp || '');
+      return b.activity - a.activity;
+    });
+  } else {
+    items.sort((a, b) => b.activity - a.activity ||
+      (b.nextEp.airstamp || '').localeCompare(a.nextEp.airstamp || ''));
+  }
+
+  // sort toggle button — re-render in place
+  const sortLabel = nextSort === 'new' ? '🆕 New this week' : '⏱ By activity';
+  const sortNext = nextSort === 'new' ? 'activity' : 'new';
 
   $('#next-empty').classList.toggle('hidden', items.length > 0);
   const shown = items.slice(0, nextLimit);
-  $('#next-list').innerHTML = shown.map(({ show, nextEp, behind, resumePct }) => `
-    <div class="ep-card" data-show="${show.id}">
+  $('#next-list').innerHTML =
+    `<div class="next-sort-row"><button class="pill-btn" id="next-sort-btn">${sortLabel}</button></div>` +
+    shown.map(({ show, nextEp, behind, resumePct, hasNew }) => `
+    <div class="ep-card${hasNew && nextSort === 'new' ? ' ep-card--new' : ''}" data-show="${show.id}">
       <div class="poster" data-open="${show.id}" style="${imgCss(show.image)}"></div>
       <div class="body">
-        <div class="show-name" data-open="${show.id}">${esc(show.name)}</div>
+        <div class="show-name" data-open="${show.id}">${esc(show.name)}${hasNew ? ' <span class="new-badge">NEW</span>' : ''}</div>
         <div class="ep-code">${epCode(nextEp)}</div>
         <div class="ep-name">${esc(nextEp.name || '')}</div>
         <div class="ep-date">${fmtDate(nextEp.airdate || nextEp.airstamp)}${show.platform ? ` &middot; ${esc(show.platform)}` : ''}</div>
@@ -194,6 +220,8 @@ async function renderNext() {
       ? `<button class="big-btn" id="next-more">Show more (${items.length - shown.length} more shows)</button>` : '');
   const moreBtn = $('#next-more');
   if (moreBtn) moreBtn.onclick = () => { nextLimit += 120; renderNext(); };
+  const sortBtn = $('#next-sort-btn');
+  if (sortBtn) sortBtn.onclick = () => { nextSort = sortNext; nextLimit = 60; renderNext(); };
 }
 
 // ---------- Upcoming ----------
@@ -352,6 +380,22 @@ async function doMovieSearch(q) {
 
 // ---------- recommendations (empty-search "Discover") ----------
 
+// Pick the most-recently-watched item as the recommendation seed so the
+// result reflects what you're actually watching now, not a random old show.
+async function recentSeed(items, watchedAll, keyFn) {
+  let best = null, bestT = 0;
+  const watchedByShow = new Map();
+  for (const w of watchedAll) {
+    const t = w.watchedAt ? new Date(w.watchedAt).getTime() : 0;
+    if (t > (watchedByShow.get(w.showId) || 0)) watchedByShow.set(w.showId, t);
+  }
+  for (const item of items) {
+    const t = watchedByShow.get(keyFn(item)) || (item.watchedAt ? new Date(item.watchedAt).getTime() : 0);
+    if (t > bestT) { bestT = t; best = item; }
+  }
+  return best || items[Math.floor(Math.random() * items.length)];
+}
+
 async function renderRecommendations() {
   const box = $('#search-results');
   if (!(await tmdb.hasKey())) {
@@ -363,21 +407,35 @@ async function renderRecommendations() {
     if (searchMode === 'movies') {
       const movies = (await db.all('movies')).filter(m => m.tmdbId && !isHidden(m));
       if (!movies.length) { box.innerHTML = '<p class="muted center" style="padding:24px">Add a movie (via Movies search) and I\'ll recommend more like it.</p>'; return; }
-      const seed = movies[Math.floor(Math.random() * movies.length)];
+      const seed = await recentSeed(movies, [], m => m.id);
       const recs = (await tmdb.movieRecs(seed.tmdbId)).results || [];
       const have = new Set(movies.map(m => m.tmdbId));
       box.innerHTML = `<p class="muted small" style="margin-bottom:10px">More like <b>${esc(seed.title)}</b></p>` +
         recs.filter(m => !have.has(m.id)).slice(0, 12).map(m => movieCard(m)).join('') || '<p class="muted center">No recommendations right now.</p>';
     } else {
-      const shows = (await db.all('shows')).filter(s => s.imdbId && !s.archived && !isHidden(s));
+      const allWatched = await db.all('watched');
+      const shows = (await db.all('shows')).filter(s => !s.archived && !isHidden(s));
       if (!shows.length) { box.innerHTML = '<p class="muted center" style="padding:24px">Follow a show first, and I\'ll recommend more.</p>'; return; }
-      const seed = shows[Math.floor(Math.random() * shows.length)];
-      const found = await tmdb.findByImdb(seed.imdbId);
-      const tvId = found.tv_results && found.tv_results[0] && found.tv_results[0].id;
+      // prefer shows we have an imdbId for; fall back to any show
+      const withImdb = shows.filter(s => s.imdbId);
+      const seed = await recentSeed(withImdb.length ? withImdb : shows, allWatched, s => s.id);
+      let tvId = null;
+      if (seed.imdbId) {
+        const found = await tmdb.findByImdb(seed.imdbId);
+        tvId = found.tv_results && found.tv_results[0] && found.tv_results[0].id;
+      }
+      if (!tvId) {
+        // fallback: search TMDB by name
+        try {
+          const res = await fetch(`https://api.themoviedb.org/3/search/tv?query=${encodeURIComponent(seed.name)}&api_key=${await kv.get('settings:tmdbKey', '')}`);
+          if (res.ok) { const d = await res.json(); tvId = d.results && d.results[0] && d.results[0].id; }
+        } catch {}
+      }
       if (!tvId) { box.innerHTML = '<p class="muted center" style="padding:24px">No recommendations for these shows yet — try searching.</p>'; return; }
       const recs = (await tmdb.tvRecs(tvId)).results || [];
+      const followedNames = new Set(shows.map(s => s.name.toLowerCase()));
       box.innerHTML = `<p class="muted small" style="margin-bottom:10px">Because you watch <b>${esc(seed.name)}</b></p>` +
-        (recs.slice(0, 12).map(t => `
+        (recs.filter(t => !followedNames.has((t.name || '').toLowerCase())).slice(0, 12).map(t => `
           <div class="result-card">
             <div class="poster" style="${imgCss(tmdbImg(t.poster_path, 'w185'))}"></div>
             <div class="body">
@@ -457,11 +515,15 @@ export async function syncShowEpisodes(showId) {
 async function syncStaleShows({ force = false } = {}) {
   const shows = await db.all('shows');
   const dayAgo = Date.now() - 86400000;
+  const monthAgo = Date.now() - 30 * 86400000;
   const stale = shows.filter(s => {
     if (String(s.id).startsWith('tvt-')) return false; // placeholder: no TVmaze episodes to fetch
     if (!s.lastEpisodeSync) return true;
     if (force) return s.status !== 'Ended';
-    return s.status !== 'Ended' && new Date(s.lastEpisodeSync).getTime() < dayAgo;
+    // Running shows: re-sync daily. Ended shows: re-sync monthly (catches
+    // episode corrections, added specials, and runtime fixes).
+    const age = new Date(s.lastEpisodeSync).getTime();
+    return s.status === 'Ended' ? age < monthAgo : age < dayAgo;
   });
   if (!stale.length) return 0;
   for (const s of stale) {
@@ -524,17 +586,18 @@ async function progressSheet(title, current) {
 async function fetchAvailability(show) {
   const key = await kv.get('settings:rapidApiKey', '');
   if (!key) { toast('Add your RapidAPI key in More \u2192 Settings first'); return null; }
+  const country = (await kv.get('settings:country', 'us') || 'us').toLowerCase().slice(0, 2);
   const cached = await kv.get('avail:' + show.id);
   if (cached && Date.now() - cached.at < 86400000) return cached.data; // 24h cache saves quota
   const base = 'https://streaming-availability.p.rapidapi.com';
   const headers = { 'x-rapidapi-key': key };
   let data = null;
   if (show.imdbId) {
-    const res = await fetch(`${base}/shows/${show.imdbId}?country=us`, { headers });
+    const res = await fetch(`${base}/shows/${show.imdbId}?country=${country}`, { headers });
     if (res.ok) data = await res.json();
   }
   if (!data) {
-    const res = await fetch(`${base}/shows/search/title?title=${encodeURIComponent(show.name)}&country=us&show_type=series`, { headers });
+    const res = await fetch(`${base}/shows/search/title?title=${encodeURIComponent(show.name)}&country=${country}&show_type=series`, { headers });
     if (res.ok) { const arr = await res.json(); data = Array.isArray(arr) ? arr[0] || null : arr; }
   }
   await kv.set('avail:' + show.id, { at: Date.now(), data });
@@ -548,12 +611,14 @@ function serviceOwned(opt, owned) {
   return owned.some(p => { const pl = p.toLowerCase(); return name.includes(pl) || pl.includes(name) || pl.includes(id); });
 }
 
-function showAvailabilitySheet(show, data, owned = []) {
+function showAvailabilitySheet(show, data, owned = [], country = 'us') {
   const el = $('#sheet');
-  const opts = (data && data.streamingOptions && data.streamingOptions.us) || [];
+  // RapidAPI returns options keyed by country code
+  const countryOpts = (data && data.streamingOptions && data.streamingOptions[country])
+    || (data && data.streamingOptions && data.streamingOptions.us) || [];
   const seen = new Set();
   const rows = [];
-  for (const o of opts) {
+  for (const o of countryOpts) {
     const k = o.service.id + ':' + o.type;
     if (seen.has(k)) continue;
     seen.add(k);
@@ -564,15 +629,18 @@ function showAvailabilitySheet(show, data, owned = []) {
   rows.sort((a, b) => (b._owned - a._owned) || ((a.type === 'subscription' ? 0 : 1) - (b.type === 'subscription' ? 0 : 1)));
   el.innerHTML = `<div class="sheet-card">
     <h3>Where to watch \u2014 ${esc(show.name)}</h3>
-    ${rows.length ? rows.map(o => `
-      <div class="avail-row">
+    ${rows.length ? rows.map(o => {
+      const inner = `
         <span class="svc">${esc(o.service.name)}${o._owned ? ' <span class="owned">\u2713 yours</span>' : ''}</span>
         <span>
           <span class="kind ${o.type === 'subscription' ? 'sub' : ''}">${esc(o.type)}</span>
           ${o.expiresSoon ? `<span class="leaving">\u26a0 leaving${o.expiresOn ? ' ' + new Date(o.expiresOn * 1000).toLocaleDateString() : ' soon'}</span>` : ''}
-        </span>
-      </div>`).join('')
-      : '<p class="muted center" style="padding:12px 0">Not streaming anywhere in the US right now.</p>'}
+        </span>`;
+      return o.link
+        ? `<a class="avail-row avail-link" href="${esc(o.link)}" target="_blank" rel="noopener">${inner}</a>`
+        : `<div class="avail-row">${inner}</div>`;
+    }).join('')
+      : `<p class="muted center" style="padding:12px 0">Not streaming in ${country.toUpperCase()} right now.</p>`}
     <button class="sheet-btn cancel" data-close="1">Close</button></div>`;
   el.classList.remove('hidden');
   el.onclick = (ev) => {
@@ -668,7 +736,8 @@ async function renderDetail(showId) {
     try {
       const data = await fetchAvailability(show);
       const owned = await kv.get('settings:myPlatforms', []);
-      if (data !== null || await kv.get('settings:rapidApiKey', '')) showAvailabilitySheet(show, data, owned);
+      const country = (await kv.get('settings:country', 'us') || 'us').toLowerCase().slice(0, 2);
+      if (data !== null || await kv.get('settings:rapidApiKey', '')) showAvailabilitySheet(show, data, owned, country);
     } catch (e) { toast('Availability check failed'); }
   };
   $('#detail-addlist').onclick = () => addToList({ type: 'series', tvmazeId: show.id, tvdbId: show.tvdbId, title: show.name });
@@ -809,6 +878,34 @@ async function renderMore() {
   const etaDays = pacePerDay > 0 ? Math.ceil(backlogMin / pacePerDay) : null;
   const fmtEta = (min) => pacePerDay > 0 ? `${Math.ceil(min / pacePerDay)} days at your pace` : '—';
 
+  // 12-week watch chart: bucket watched minutes into ISO weeks
+  const weekBuckets = new Array(12).fill(0);
+  const msPerWeek = 7 * 86400000;
+  // start of the current week (Monday)
+  const nowDate = new Date(now);
+  const dayOfWeek = (nowDate.getDay() + 6) % 7; // 0=Mon
+  const weekStart = now - dayOfWeek * 86400000 - (nowDate.getHours() * 3600 + nowDate.getMinutes() * 60 + nowDate.getSeconds()) * 1000;
+  for (const w of watched) {
+    if (!w.watchedAt) continue;
+    const wShow = showById.get(w.showId);
+    if (wShow && isHidden(wShow)) continue;
+    const t = new Date(w.watchedAt).getTime();
+    const weeksAgo = Math.floor((weekStart - t) / msPerWeek);
+    if (weeksAgo < 0 || weeksAgo >= 12) continue;
+    const rt = epById.get(w.epId)?.runtime || 40;
+    weekBuckets[11 - weeksAgo] += rt * (wProg(w) / 100);
+  }
+  const maxBucket = Math.max(...weekBuckets, 1);
+  const barW = 100 / 12;
+  const weekChart = `<svg class="week-chart" viewBox="0 0 120 40" preserveAspectRatio="none" aria-label="Watch activity last 12 weeks">
+    ${weekBuckets.map((val, i) => {
+      const h = Math.max(2, (val / maxBucket) * 36);
+      const x = i * (120 / 12) + 1;
+      const isThis = i === 11;
+      return `<rect x="${x.toFixed(1)}" y="${(40 - h).toFixed(1)}" width="${(120 / 12 - 2).toFixed(1)}" height="${h.toFixed(1)}" rx="1.5" fill="${isThis ? 'var(--accent)' : 'var(--bg3)'}"/>`;
+    }).join('')}
+  </svg>`;
+
   $('#stats').innerHTML = `
     <div class="stat"><div class="num">${shows.filter(s => !isHidden(s)).length}</div><div class="lbl">shows</div></div>
     <div class="stat"><div class="num">${doneEps.toLocaleString()}</div><div class="lbl">episodes watched</div></div>
@@ -816,6 +913,12 @@ async function renderMore() {
     <div class="stat"><div class="num">${movies.filter(m => !isHidden(m)).length}</div><div class="lbl">movies &amp; items</div></div>
     <div class="stat"><div class="num">${fmtHours(backlogMin)}</div><div class="lbl">left to watch (backlog)</div></div>
     <div class="stat"><div class="num">${etaDays != null ? etaDays + 'd' : '—'}</div><div class="lbl">to finish at your pace${pacePerDay ? ` (${Math.round(pacePerDay)} min/day)` : ''}</div></div>`;
+  // week chart below the stats grid
+  const chartWrap = document.getElementById('stats-chart');
+  if (chartWrap) {
+    chartWrap.innerHTML = weekChart +
+      `<div class="chart-labels"><span>12 weeks ago</span><span>This week</span></div>`;
+  }
 
   const platRows = [...backlogByPlatform.entries()].sort((a, b) => b[1].backlog - a[1].backlog);
   $('#platform-stats').innerHTML = platRows.length ? platRows.map(([plat, b]) => `
@@ -902,6 +1005,7 @@ async function renderMore() {
   $('#set-tmdb').value = await kv.get('settings:tmdbKey', '');
   $('#set-rapid').value = await kv.get('settings:rapidApiKey', '');
   $('#set-tvdb').value = await kv.get('settings:tvdbKey', '');
+  $('#set-country').value = await kv.get('settings:country', 'us');
   $('#set-availmode').value = await kv.get('settings:availMode', 'app');
   $('#set-rewatchdates').checked = await kv.get('settings:recordRewatchDates', true);
   await renderMyPlatforms();
@@ -1116,6 +1220,8 @@ $('#btn-save-settings').addEventListener('click', async () => {
   await kv.set('settings:rapidApiKey', $('#set-rapid').value.trim());
   await kv.set('settings:tvdbKey', $('#set-tvdb').value.trim());
   await kv.set('settings:recordRewatchDates', $('#set-rewatchdates').checked);
+  const country = ($('#set-country').value || 'us').trim().toLowerCase().replace(/[^a-z]/g, '').slice(0, 2) || 'us';
+  await kv.set('settings:country', country);
   toast('Settings saved');
   queueSync();
 });
@@ -1169,8 +1275,34 @@ async function doSyncNow(silent = false) {
   const btn = $('#btn-sync');
   if (btn) { btn.disabled = true; btn.textContent = 'Syncing…'; }
   try {
+    // snapshot counts before pull so we can report what changed
+    const before = {
+      episodes: await db.count('episodes'),
+      watched: await db.count('watched'),
+      shows: await db.count('shows'),
+    };
     await syncNow((msg) => { if (btn) btn.textContent = msg; });
-    if (!silent) toast('Synced');
+    const after = {
+      episodes: await db.count('episodes'),
+      watched: await db.count('watched'),
+      shows: await db.count('shows'),
+    };
+    const newEps = Math.max(0, after.episodes - before.episodes);
+    const newWatched = Math.max(0, after.watched - before.watched);
+    const newShows = Math.max(0, after.shows - before.shows);
+    if (!silent) {
+      const parts = [];
+      if (newShows) parts.push(`${newShows} new show${newShows > 1 ? 's' : ''}`);
+      if (newEps) parts.push(`${newEps} new episode${newEps > 1 ? 's' : ''}`);
+      if (newWatched) parts.push(`${newWatched} watch record${newWatched > 1 ? 's' : ''}`);
+      toast(parts.length ? `Synced — ${parts.join(', ')}` : 'Synced');
+    } else if (newShows || newEps || newWatched) {
+      const parts = [];
+      if (newShows) parts.push(`${newShows} show${newShows > 1 ? 's' : ''}`);
+      if (newEps) parts.push(`${newEps} episode${newEps > 1 ? 's' : ''}`);
+      if (newWatched) parts.push(`${newWatched} watch${newWatched > 1 ? 'es' : ''}`);
+      toast(`Synced — ${parts.join(', ')} from another device`, 3500);
+    }
     await renderAlerts();
     renderSyncUI();
     if (currentView !== 'more') render(currentView); // reflect pulled changes

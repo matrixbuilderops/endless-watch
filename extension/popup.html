@@ -25,7 +25,11 @@
   </div>
   <div id="signedin" class="hidden">
     <p id="who"></p>
-    <p class="muted">Scrobbling is on. Keep watching — episodes mark themselves at ~92% watched.</p>
+    <p class="muted">Scrobbling is on. Keep watching — episodes mark themselves when you reach the threshold below.</p>
+    <label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:0.82rem;color:#8b98ab">
+      Mark watched after
+      <input id="threshold" type="number" min="50" max="99" value="90" style="width:52px;padding:4px 6px;border-radius:6px;border:1px solid #263248;background:#202b3d;color:#e8edf5;font-size:0.85rem">%
+    </label>
     <button id="signout" class="ghost">Sign out</button>
   </div>
   <div id="status"></div>

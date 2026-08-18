@@ -355,3 +355,52 @@ test('a show with no imdbId is skipped rather than queried blindly', async () =>
   await checkUser('u', st, h);
   assert.deepStrictEqual(h.calls.api, []);
 });
+
+// ---------------- country setting ----------------
+
+test('the API call uses the country from settings:country, not always "us"', async () => {
+  const st = state({ kv: { ...BACKGROUND, 'settings:country': 'gb' } });
+  addShow(st, 1); addEpisode(st, 11, 1); addEpisode(st, 12, 1); markWatched(st, 11, 1);
+  const h = spyHelpers({ tt1: { streamingOptions: { gb: [svc('BBC iPlayer')] } } });
+  await checkUser('u', st, h);
+  assert.ok(h.calls.api[0].includes('country=gb'), 'request must target the user\'s country');
+});
+
+test('country defaults to us when settings:country is absent', async () => {
+  const st = state({ kv: BACKGROUND });
+  addShow(st, 1); addEpisode(st, 11, 1); addEpisode(st, 12, 1); markWatched(st, 11, 1);
+  const h = spyHelpers({ tt1: { streamingOptions: { us: [svc('Netflix')] } } });
+  await checkUser('u', st, h);
+  assert.ok(h.calls.api[0].includes('country=us'), 'default must be us');
+});
+
+test('country code is normalised to lowercase and truncated to 2 chars', async () => {
+  const st = state({ kv: { ...BACKGROUND, 'settings:country': 'AU' } });
+  addShow(st, 1); addEpisode(st, 11, 1); addEpisode(st, 12, 1); markWatched(st, 11, 1);
+  const h = spyHelpers({ tt1: { streamingOptions: { au: [svc('Stan')] } } });
+  await checkUser('u', st, h);
+  assert.ok(h.calls.api[0].includes('country=au'), 'must be lowercase and exactly 2 chars');
+});
+
+test('streamingOptions falls back to us key when the country key is absent', async () => {
+  // API may not have options for some countries yet; fall back so alerts still work.
+  const st = state({ kv: { ...BACKGROUND, 'settings:country': 'nz' } });
+  addShow(st, 1, { platform: 'Netflix' }); addEpisode(st, 11, 1); addEpisode(st, 12, 1); markWatched(st, 11, 1);
+  // response has 'us' key but not 'nz'
+  const h = spyHelpers({ tt1: { streamingOptions: { us: [svc('Netflix')] } } });
+  await checkUser('u', st, h);
+  // Netflix is present in the us fallback, so no "left" alert
+  assert.deepStrictEqual(st.alerts.filter(a => a.kind === 'left'), [], 'us fallback prevents a spurious left-platform alert');
+});
+
+test('a show that left the platform in the user\'s country triggers an alert', async () => {
+  const st = state({ kv: { ...BACKGROUND, 'settings:country': 'ca' } });
+  addShow(st, 1, { name: 'Schitt\'s Creek', platform: 'Netflix', imdbId: 'tt1' });
+  addEpisode(st, 11, 1); addEpisode(st, 12, 1); markWatched(st, 11, 1);
+  // show is on Netflix in us but NOT in ca
+  const h = spyHelpers({ tt1: { streamingOptions: { ca: [], us: [svc('Netflix')] } } });
+  await checkUser('u', st, h);
+  const left = st.alerts.find(a => a.kind === 'left');
+  assert.ok(left, 'must alert when the show left the user\'s country\'s Netflix');
+});
+

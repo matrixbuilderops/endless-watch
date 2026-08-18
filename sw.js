@@ -3,7 +3,7 @@
 const CACHE = 'endless-watch-v1';
 const SHELL = [
   './', 'index.html', 'css/style.css',
-  'js/app.js', 'js/db.js', 'js/api.js', 'js/html.js', 'js/import.js', 'js/sync.js', 'js/tmdb.js', 'js/push.js',
+  'js/app.js', 'js/db.js', 'js/api.js', 'js/html.js', 'js/import.js', 'js/rewatch.js', 'js/sync.js', 'js/tmdb.js', 'js/push.js',
   'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png',
 ];
 

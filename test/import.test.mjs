@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert';
 import zlib from 'node:zlib';
 
-import { analyzeFiles, collapseWatches } from '../js/import.js';
+import { analyzeFiles, buildWatchRecords } from '../js/import.js';
 
 // ---------------- a real ZIP, assembled by hand ----------------
 
@@ -316,70 +316,81 @@ test('a full mixed export is separated into the right buckets', async () => {
   assert.strictEqual(out.analyzed.length, 5, 'every file is accounted for in the report');
 });
 
-// ---------------- rewatch collapsing ----------------
-// A TV Time export logs a rewatch as its own row, so one episode arrives several
-// times. Writing one record per row let putMany overwrite and lost every
-// rewatch — which is exactly what happened to 12 episodes in the original
-// converted library.
+// ---------------- rows to watch records ----------------
+// The step that was actually wrong: episode rows in, watch records out. runImport
+// itself needs IndexedDB and a TVmaze fetch, so this is the seam that can be
+// tested; the rewatch rule it delegates to is covered in rewatch.test.mjs.
 
-test('a single viewing is not a rewatch', () => {
-  const [rec] = collapseWatches(82, [{ epId: 1, when: '2021-01-01T00:00:00.000Z' }]);
-  assert.strictEqual(rec.rewatchCount, 0);
-  assert.strictEqual(rec.watchedAt, '2021-01-01T00:00:00.000Z');
-  assert.strictEqual(rec.rewatches, undefined);
-  assert.strictEqual(rec.showId, 82);
-  assert.strictEqual(rec.progress, 100);
+const FIELDS = { season: 'season', epNumber: 'episode', watchedAt: 'date' };
+const EP_MAP = new Map([
+  ['1:1', { id: 101 }],
+  ['1:2', { id: 102 }],
+  ['2:1', { id: 201 }],
+]);
+const row = (season, episode, date) => ({ r: { season, episode, date }, f: FIELDS });
+
+test('each matched row becomes a watch record for its episode', () => {
+  const { records, unmatched } = buildWatchRecords(82, [
+    row('1', '1', '2021-01-01T00:00:00Z'),
+    row('1', '2', '2021-01-02T00:00:00Z'),
+  ], EP_MAP);
+  assert.strictEqual(unmatched, 0);
+  assert.deepStrictEqual(records.map(r => r.epId).sort(), [101, 102]);
+  assert.ok(records.every(r => r.showId === 82 && r.progress === 100 && r.source === 'tvtime'));
 });
 
-test('watching an episode twice becomes one record with a rewatch', () => {
-  const [rec] = collapseWatches(82, [
-    { epId: 1, when: '2019-06-18T10:00:00.000Z' },
-    { epId: 1, when: '2022-03-04T21:00:00.000Z' },
-  ]);
-  assert.strictEqual(rec.rewatchCount, 1);
-  assert.strictEqual(rec.watchedAt, '2022-03-04T21:00:00.000Z', 'watchedAt is the most recent viewing');
-  assert.deepStrictEqual(rec.rewatches, ['2022-03-04T21:00:00.000Z'], 'the repeat viewing is the rewatch');
+test('repeat rows for one episode collapse into a single record', () => {
+  // The regression: this used to emit one record per row, and putMany kept the last.
+  const { records } = buildWatchRecords(82, [
+    row('1', '1', '2019-01-01T00:00:00Z'),
+    row('1', '1', '2022-01-01T00:00:00Z'),
+  ], EP_MAP);
+  assert.strictEqual(records.length, 1, 'one record per episode, not per row');
+  assert.strictEqual(records[0].rewatchCount, 1, 'the repeat viewing survives as a rewatch');
+  assert.strictEqual(records[0].watchedAt, '2022-01-01T00:00:00.000Z');
 });
 
-test('three viewings give a rewatch count of two, in order', () => {
-  const [rec] = collapseWatches(82, [
-    { epId: 1, when: '2022-01-01T00:00:00.000Z' },
-    { epId: 1, when: '2019-01-01T00:00:00.000Z' },
-    { epId: 1, when: '2020-01-01T00:00:00.000Z' },
-  ]);
-  assert.strictEqual(rec.rewatchCount, 2);
-  assert.deepStrictEqual(rec.rewatches, ['2020-01-01T00:00:00.000Z', '2022-01-01T00:00:00.000Z']);
+test('a season marked watched in one sitting does not become rewatches', () => {
+  const { records } = buildWatchRecords(82, [
+    row('1', '1', '2019-06-18T06:12:39Z'),
+    row('1', '1', '2019-06-18T06:12:46Z'),
+  ], EP_MAP);
+  assert.strictEqual(records[0].rewatchCount, 0);
 });
 
-test('rows sharing an exact timestamp are a double-log, not two viewings', () => {
-  const [rec] = collapseWatches(82, [
-    { epId: 1, when: '2019-06-18T10:00:00.000Z' },
-    { epId: 1, when: '2019-06-18T10:00:00.000Z' },
-  ]);
-  assert.strictEqual(rec.rewatchCount, 0, 'the same instant cannot be two viewings');
-  assert.strictEqual(rec.rewatches, undefined);
+test('rows whose episode is not in the show are counted, not dropped silently', () => {
+  const { records, unmatched } = buildWatchRecords(82, [
+    row('1', '1', '2021-01-01T00:00:00Z'),
+    row('9', '9', '2021-01-01T00:00:00Z'),
+  ], EP_MAP);
+  assert.strictEqual(unmatched, 1);
+  assert.strictEqual(records.length, 1);
 });
 
-test('rewatch dates are omitted when the setting is off, but the count survives', () => {
-  const [rec] = collapseWatches(82, [
-    { epId: 1, when: '2019-01-01T00:00:00.000Z' },
-    { epId: 1, when: '2022-01-01T00:00:00.000Z' },
-  ], false);
-  assert.strictEqual(rec.rewatchCount, 1);
-  assert.strictEqual(rec.rewatches, undefined);
+test('a row with no usable season or episode number is unmatched', () => {
+  const { records, unmatched } = buildWatchRecords(82, [
+    row('', '', '2021-01-01T00:00:00Z'),
+    row('abc', 'def', '2021-01-01T00:00:00Z'),
+  ], EP_MAP);
+  assert.strictEqual(unmatched, 2);
+  assert.strictEqual(records.length, 0);
 });
 
-test('separate episodes stay separate', () => {
-  const out = collapseWatches(82, [
-    { epId: 1, when: '2021-01-01T00:00:00.000Z' },
-    { epId: 2, when: '2021-01-02T00:00:00.000Z' },
-    { epId: 1, when: '2023-01-01T00:00:00.000Z' },
-  ]);
-  assert.strictEqual(out.length, 2);
-  assert.strictEqual(out.find(r => r.epId === 1).rewatchCount, 1);
-  assert.strictEqual(out.find(r => r.epId === 2).rewatchCount, 0);
+test('a row with an unparseable date still imports, dated now', () => {
+  const before = Date.now();
+  const { records } = buildWatchRecords(82, [row('1', '1', 'not a date')], EP_MAP);
+  assert.strictEqual(records.length, 1);
+  assert.ok(Date.parse(records[0].watchedAt) >= before, 'falls back to the current time');
 });
 
-test('no rows means no records', () => {
-  assert.deepStrictEqual(collapseWatches(82, []), []);
+test('the rewatch-dates setting is passed through to the records', () => {
+  const rows = [row('1', '1', '2019-01-01T00:00:00Z'), row('1', '1', '2022-01-01T00:00:00Z')];
+  assert.deepStrictEqual(buildWatchRecords(82, rows, EP_MAP, true).records[0].rewatches,
+    ['2022-01-01T00:00:00.000Z']);
+  assert.strictEqual(buildWatchRecords(82, rows, EP_MAP, false).records[0].rewatches, undefined);
+  assert.strictEqual(buildWatchRecords(82, rows, EP_MAP, false).records[0].rewatchCount, 1);
+});
+
+test('no rows means no records and nothing unmatched', () => {
+  assert.deepStrictEqual(buildWatchRecords(82, [], EP_MAP), { records: [], unmatched: 0 });
 });

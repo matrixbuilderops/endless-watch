@@ -16,6 +16,17 @@
   'use strict';
   const host = () => location.hostname;   // lazy: only read in the browser
   let lastKey = null, sent = false;
+  // configurable threshold (default 90%) — read once from storage and kept in
+  // a closure var; popup.js writes it as an integer (50–99).
+  let threshold = 0.90;
+  if (typeof chrome !== 'undefined' && chrome.storage) {
+    chrome.storage.local.get(['threshold'], (r) => {
+      if (r.threshold != null) threshold = Math.max(50, Math.min(99, r.threshold)) / 100;
+    });
+    chrome.storage.onChanged && chrome.storage.onChanged.addListener((changes) => {
+      if (changes.threshold) threshold = Math.max(50, Math.min(99, changes.threshold.newValue || 90)) / 100;
+    });
+  }
 
   const PLATFORMS = [
     [/netflix\./, 'Netflix'],
@@ -139,7 +150,7 @@
     const key = `${info.title}|${info.season ?? ''}|${info.episode ?? info.epName ?? ''}`;
     if (key !== lastKey) { lastKey = key; sent = false; }
 
-    if (!sent && video.currentTime / video.duration >= 0.92) {
+    if (!sent && video.currentTime / video.duration >= threshold) {
       sent = true;
       chrome.runtime.sendMessage({
         type: 'scrobble',
