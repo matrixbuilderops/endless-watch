@@ -1,9 +1,11 @@
 {
   "name": "endless-watch",
-  "version": "1.0.0",
-  "description": "Personal TV & movie tracker — PWA, sync server, and browser scrobbler.",
+  "version": "1.1.0",
+  "description": "Personal TV & movie tracker — PWA, sync server, browser scrobbler, and community social layer.",
   "private": true,
   "scripts": {
+    "start": "node server/server.js",
+    "start:social": "node server/social.js",
     "test": "node --test test/*.test.js test/*.test.mjs",
     "test:e2e": "python3 test/e2e/test_phone.py",
     "test:all": "npm test && npm run test:e2e"
