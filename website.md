@@ -9,3 +9,12 @@ A local-first media tracker that auto-logs what you watch across 10 streaming se
 ### What's new
 - Automatic scrobbling across Netflix, Prime, Disney+, Crunchyroll, Hulu, Paramount+, Apple TV+, Max, Peacock, and YouTube
 - One-tap import from a TV Time export or Netflix activity file
+
+### Bastion Fold path
+
+[Bastion Fold general hub](https://www.bastion-fold-site.workers.dev/) -> [Entertainment](https://www.bastion-fold-site.workers.dev/entertainment/) -> **Endless Watch**
+
+- Product page: [https://www.bastion-fold-site.workers.dev/entertainment/tv-time/](https://www.bastion-fold-site.workers.dev/entertainment/tv-time/)
+- Pricing: [Entertainment pricing](https://www.bastion-fold-site.workers.dev/pricing/#entertainment)
+- Same-branch path: [StoryVerse](https://github.com/BastionFold/storyverse)
+- This public repo is the product's public face; source code lives in its private engine repo.
